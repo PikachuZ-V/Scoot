@@ -7,6 +7,7 @@ window.APP_CONFIG = {
   // Wajib diisi dari Supabase Project Settings > API
   supabaseUrl: "https://tkvpvmrcjkgzjabyuvyv.supabase.co",
   supabaseAnonKey: "sb_publishable_d4NdH-SjhmvXf0ki64dTcA_LGVbfn6i",
+   appUrl: "https://https://scoot.vandavicada66.workers.dev",
 
   // OCR checkout proof memakai Gemini via backend Cloudflare Pages Functions.
   // Jangan isi Gemini API key di frontend production.
