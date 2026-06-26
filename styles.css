@@ -1146,3 +1146,35 @@ dialog {
   .transfer-card .card-head > div:first-child { min-width: 0; }
   .mini-transfer-card { padding: 10px; }
 }
+
+/* V18 - Location stock motor HQ/Canggu */
+.location-summary-grid {
+  margin-top: 14px;
+}
+.location-section .mini-row {
+  margin-top: 6px;
+}
+.mini-form-section {
+  border: 1px solid var(--border, #dde4ee);
+  background: #f8fafc;
+  border-radius: 16px;
+  padding: 12px;
+  margin: 12px 0;
+}
+.mini-form-section h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.transfer-delta {
+  margin: 10px 0 4px;
+  background: #eef6ff;
+}
+@media (max-width: 640px) {
+  .location-summary-grid,
+  #transferSummary {
+    grid-template-columns: 1fr !important;
+  }
+  .mini-form-section {
+    padding: 10px;
+  }
+}

@@ -167,10 +167,18 @@
     data.whatsapp_logs = data.whatsapp_logs || [];
     data.whatsapp_settings = data.whatsapp_settings || { enabled: true, group_name: "Group Laporan Maintenance" };
     data.motor_transfers = data.motor_transfers || [];
+    data.motors.forEach(function (m) {
+      m.current_location = m.current_location || m.outlet || 'HQ';
+    });
     data.motor_transfers.forEach(function (t) {
       t.items = t.items || [];
       t.created_at = t.created_at || t.transfer_date || todayIso();
       t.transfer_code = t.transfer_code || seq("TRF", data.motor_transfers, "transfer_code");
+      t.send_from_location = t.send_from_location || t.from_location || 'HQ';
+      t.send_to_location = t.send_to_location || t.to_location || 'Canggu';
+      t.return_from_location = t.return_from_location || 'Canggu';
+      t.return_to_location = t.return_to_location || 'HQ';
+      t.location_delta_summary = t.location_delta_summary || '';
     });
     data.owner_approvals.forEach(function (a) {
       a.marketplace = a.marketplace || "";
@@ -626,14 +634,19 @@
     if (form) form.style.display = role === 'admin' ? 'block' : 'none';
     if ($('transferAdminName') && !$('transferAdminName').value) $('transferAdminName').value = currentUserName();
     if ($('transferDate') && !$('transferDate').value) $('transferDate').value = todayDashed();
+    if ($('transferSendFrom') && !$('transferSendFrom').value) $('transferSendFrom').value = 'HQ';
+    if ($('transferSendTo') && !$('transferSendTo').value) $('transferSendTo').value = 'Canggu';
+    if ($('transferReturnFrom') && !$('transferReturnFrom').value) $('transferReturnFrom').value = 'Canggu';
+    if ($('transferReturnTo') && !$('transferReturnTo').value) $('transferReturnTo').value = 'HQ';
     var q = ($('transferSearch') && $('transferSearch').value || '').toLowerCase();
     var transfers = (state.motor_transfers || []).slice().sort(function (a,b) { return String(b.created_at || b.transfer_date || '').localeCompare(String(a.created_at || a.transfer_date || '')); });
     var totalSent = 0, totalReturned = 0;
     transfers.forEach(function (t) { (t.items || []).forEach(function (it) { if (it.direction === 'send_ready') totalSent++; else totalReturned++; }); });
     if ($('transferSummary')) $('transferSummary').innerHTML =
       '<div class="status-section"><div class="status-count">' + transfers.length + '</div><h3>Total Dokumen</h3><div class="muted">Pengiriman/retur tercatat</div></div>' +
-      '<div class="status-section"><div class="status-count">' + totalSent + '</div><h3>Motor Ready Dikirim</h3><div class="muted">Dari HQ ke outlet</div></div>' +
-      '<div class="status-section"><div class="status-count">' + totalReturned + '</div><h3>Motor Retur Maintenance</h3><div class="muted">Dari outlet ke HQ</div></div>';
+      '<div class="status-section"><div class="status-count">' + totalSent + '</div><h3>Motor Ready Dikirim</h3><div class="muted">Status tetap Ready, lokasi pindah ke tujuan</div></div>' +
+      '<div class="status-section"><div class="status-count">' + totalReturned + '</div><h3>Motor Retur Maintenance</h3><div class="muted">Status otomatis menjadi Maintenance</div></div>' +
+      locationSummaryHtml(true);
     var filtered = transfers.filter(function (t) {
       var hay = [t.transfer_code, t.transfer_date, t.from_location, t.to_location, t.admin_name, t.note].join(' ');
       (t.items || []).forEach(function (it) { var m = state.motors.find(function (x) { return x.id === it.motor_id; }) || {}; hay += ' ' + [it.motor_code, m.motor_code, m.plate_number, it.direction, it.note].join(' '); });
@@ -642,7 +655,9 @@
     $('transferList').innerHTML = filtered.length ? filtered.map(function (t) {
       var sent = (t.items || []).filter(function (it) { return it.direction === 'send_ready'; });
       var ret = (t.items || []).filter(function (it) { return it.direction === 'return_maintenance'; });
-      return '<div class="card transfer-card"><div class="card-head"><div><div class="card-title">' + esc(t.transfer_code || '-') + '</div><div class="card-sub">' + esc(t.transfer_date || '-') + ' · ' + esc(t.from_location || '-') + ' → ' + esc(t.to_location || '-') + ' · Admin: ' + esc(t.admin_name || '-') + '</div></div><span class="tag gray">' + sent.length + ' kirim · ' + ret.length + ' retur</span></div>' +
+      var deltaText = t.location_delta_summary || transferDeltaSummary(sent.length, ret.length, t.send_from_location || t.from_location || 'HQ', t.send_to_location || t.to_location || 'Canggu', t.return_from_location || 'Canggu', t.return_to_location || 'HQ');
+      return '<div class="card transfer-card"><div class="card-head"><div><div class="card-title">' + esc(t.transfer_code || '-') + '</div><div class="card-sub">' + esc(t.transfer_date || '-') + ' · Kirim: ' + esc(t.send_from_location || t.from_location || '-') + ' → ' + esc(t.send_to_location || t.to_location || '-') + ' · Retur: ' + esc(t.return_from_location || '-') + ' → ' + esc(t.return_to_location || '-') + ' · Admin: ' + esc(t.admin_name || '-') + '</div></div><span class="tag gray">' + sent.length + ' kirim · ' + ret.length + ' retur</span></div>' +
+        '<div class="notice compact transfer-delta">Perubahan lokasi otomatis: <b>' + esc(deltaText) + '</b></div>' +
         '<details class="detail-dropdown"><summary><span><b>Motor Ready Dikirim</b><small>' + sent.length + ' motor</small></span><span class="chevron">⌄</span></summary><div class="detail-dropdown-body">' + (sent.length ? sent.map(function (it) { return transferItemCardHtml({ transfer: t, item: it }); }).join('') : '<div class="muted">Tidak ada motor ready dikirim.</div>') + '</div></details>' +
         '<details class="detail-dropdown"><summary><span><b>Motor Retur Maintenance</b><small>' + ret.length + ' motor</small></span><span class="chevron">⌄</span></summary><div class="detail-dropdown-body">' + (ret.length ? ret.map(function (it) { return transferItemCardHtml({ transfer: t, item: it }); }).join('') : '<div class="muted">Tidak ada motor retur.</div>') + '</div></details>' +
         (t.note ? '<div class="card-sub"><b>Catatan:</b> ' + esc(t.note) + '</div>' : '') + '</div>';
@@ -651,8 +666,10 @@
   function createMotorTransfer(e) {
     e.preventDefault();
     var transferDate = $('transferDate').value || todayDashed();
-    var from = $('transferFrom').value.trim() || 'HQ';
-    var to = $('transferTo').value.trim() || 'Canggu';
+    var sendFrom = ($('transferSendFrom') && $('transferSendFrom').value.trim()) || 'HQ';
+    var sendTo = ($('transferSendTo') && $('transferSendTo').value.trim()) || 'Canggu';
+    var returnFrom = ($('transferReturnFrom') && $('transferReturnFrom').value.trim()) || 'Canggu';
+    var returnTo = ($('transferReturnTo') && $('transferReturnTo').value.trim()) || 'HQ';
     var adminName = $('transferAdminName').value.trim() || currentUserName();
     var note = $('transferNote').value.trim();
     var lastService = $('transferLastServiceDate').value || '';
@@ -664,26 +681,29 @@
     sendCodes.forEach(function (code) {
       var motor = findMotorByCode(code);
       if (!motor) { missing.push(code); return; }
-      motor.outlet = to;
+      motor.outlet = sendTo;
+      motor.current_location = sendTo;
       motor.status = 'ready';
       motor.last_dispatch_date = transferDate;
-      motor.last_dispatch_to = to;
-      items.push({ id: uid('trfi'), direction: 'send_ready', motor_id: motor.id, motor_code: motor.motor_code, from_location: from, to_location: to, last_service_date: latestServiceDateForMotor(motor.id), note: 'Motor ready dikirim ke ' + to });
+      motor.last_dispatch_from = sendFrom;
+      motor.last_dispatch_to = sendTo;
+      items.push({ id: uid('trfi'), direction: 'send_ready', motor_id: motor.id, motor_code: motor.motor_code, from_location: sendFrom, to_location: sendTo, last_service_date: latestServiceDateForMotor(motor.id), note: 'Motor ready dikirim dari ' + sendFrom + ' ke ' + sendTo });
     });
     returnCodes.forEach(function (code) {
       var motor = findMotorByCode(code);
       if (!motor) { missing.push(code); return; }
-      motor.outlet = to;
+      motor.outlet = returnTo;
+      motor.current_location = returnTo;
       motor.status = 'maintenance';
-      motor.return_from_location = from;
-      motor.return_to_location = to;
+      motor.return_from_location = returnFrom;
+      motor.return_to_location = returnTo;
       motor.return_date = transferDate;
       motor.return_note = note || 'Retur dari outlet untuk maintenance.';
       motor.last_service_date = lastService || motor.last_service_date || latestServiceDateForMotor(motor.id);
-      items.push({ id: uid('trfi'), direction: 'return_maintenance', motor_id: motor.id, motor_code: motor.motor_code, from_location: from, to_location: to, last_service_date: motor.last_service_date || '', note: note || 'Retur dari outlet untuk maintenance.' });
+      items.push({ id: uid('trfi'), direction: 'return_maintenance', motor_id: motor.id, motor_code: motor.motor_code, from_location: returnFrom, to_location: returnTo, last_service_date: motor.last_service_date || '', note: note || 'Retur dari ' + returnFrom + ' ke ' + returnTo + ' untuk maintenance.' });
     });
     if (!items.length) return alert('Tidak ada nomor motor yang cocok. Cek ulang input.');
-    var transfer = { id: uid('trf'), transfer_code: seq('TRF', state.motor_transfers || [], 'transfer_code'), transfer_date: transferDate, from_location: from, to_location: to, admin_name: adminName, note: note, items: items, created_at: todayIso(), created_by: currentUserName() };
+    var transfer = { id: uid('trf'), transfer_code: seq('TRF', state.motor_transfers || [], 'transfer_code'), transfer_date: transferDate, from_location: sendFrom, to_location: sendTo, send_from_location: sendFrom, send_to_location: sendTo, return_from_location: returnFrom, return_to_location: returnTo, admin_name: adminName, note: note, items: items, location_delta_summary: transferDeltaSummary(sendCodes.length, returnCodes.length, sendFrom, sendTo, returnFrom, returnTo), created_at: todayIso(), created_by: currentUserName() };
     state.motor_transfers.unshift(transfer);
     save();
     renderAll();
@@ -703,6 +723,7 @@
     var lastService = prompt('Tanggal service terakhir (opsional, format YYYY-MM-DD):', motor.last_service_date || latestServiceDateForMotor(motor.id) || '');
     motor.status = 'maintenance';
     motor.outlet = to;
+    motor.current_location = to;
     motor.return_from_location = from;
     motor.return_to_location = to;
     motor.return_date = todayDashed();
@@ -934,6 +955,61 @@
     return Object.keys(map).sort(function (a,b) { return map[b] - map[a]; }).slice(0, limit || 5).map(function (name) { return { name: name, qty: map[name] }; });
   }
 
+  function normalizeLocationName(value) {
+    var text = String(value || '').trim();
+    if (!text) return 'Lainnya';
+    var low = text.toLowerCase();
+    if (low.indexOf('hq') >= 0 || low.indexOf('head') >= 0 || low.indexOf('gudang') >= 0 || low.indexOf('pusat') >= 0) return 'HQ';
+    if (low.indexOf('canggu') >= 0 || low.indexOf('cgg') >= 0) return 'Canggu';
+    return text;
+  }
+
+  function motorLocationStats() {
+    var stats = {
+      HQ: { total: 0, ready: 0, maintenance: 0, ongoing: 0 },
+      Canggu: { total: 0, ready: 0, maintenance: 0, ongoing: 0 },
+      Lainnya: { total: 0, ready: 0, maintenance: 0, ongoing: 0 }
+    };
+    state.motors.forEach(function (m) {
+      var loc = normalizeLocationName(m.outlet || m.location || m.current_location || 'Lainnya');
+      if (!stats[loc]) stats[loc] = { total: 0, ready: 0, maintenance: 0, ongoing: 0 };
+      var st = computedMotorStatus(m);
+      stats[loc].total += 1;
+      if (st === 'ready') stats[loc].ready += 1;
+      else if (st === 'ongoing_maintenance') stats[loc].ongoing += 1;
+      else stats[loc].maintenance += 1;
+    });
+    return stats;
+  }
+
+  function locationSummaryHtml(compact) {
+    var stats = motorLocationStats();
+    var ordered = ['HQ', 'Canggu'].concat(Object.keys(stats).filter(function (k) { return ['HQ', 'Canggu', 'Lainnya'].indexOf(k) < 0; })).concat(['Lainnya']);
+    return ordered.filter(function (loc) { return stats[loc] && (stats[loc].total > 0 || loc === 'HQ' || loc === 'Canggu'); }).map(function (loc) {
+      var x = stats[loc];
+      return '<div class="status-section location-section"><div class="status-count">' + x.total + '</div><h3>Motor di ' + esc(loc) + '</h3>' +
+        '<div class="mini-row"><b>Ready</b><span>' + x.ready + '</span></div>' +
+        '<div class="mini-row"><b>Maintenance</b><span>' + x.maintenance + '</span></div>' +
+        '<div class="mini-row"><b>Ongoing</b><span>' + x.ongoing + '</span></div>' +
+        '</div>';
+    }).join('');
+  }
+
+  function transferDeltaSummary(sentCount, returnedCount, sendFrom, sendTo, returnFrom, returnTo) {
+    var map = {};
+    function add(loc, delta) {
+      loc = normalizeLocationName(loc);
+      map[loc] = (map[loc] || 0) + delta;
+    }
+    add(sendFrom, -sentCount);
+    add(sendTo, sentCount);
+    add(returnFrom, -returnedCount);
+    add(returnTo, returnedCount);
+    return Object.keys(map).filter(function (k) { return map[k] !== 0; }).map(function (k) {
+      return k + ' ' + (map[k] > 0 ? '+' : '') + map[k];
+    }).join(' · ') || 'Tidak ada perubahan lokasi';
+  }
+
   function renderOperationalOverview() {
     var box = $("adminOwnerOverviewPanel");
     if (!box) return;
@@ -947,14 +1023,17 @@
     var maintenance = state.motors.filter(function (m) { return computedMotorStatus(m) === "maintenance"; }).length;
     var ongoing = state.motors.filter(function (m) { return computedMotorStatus(m) === "ongoing_maintenance"; }).length;
     var fast = fastMovingParts(4);
+    var locStats = motorLocationStats();
     var fastHtml = fast.length ? fast.map(function (p) { return '<div class="mini-row"><b>' + esc(p.name) + '</b><span>' + esc(p.qty) + ' keluar</span></div>'; }).join("") : '<div class="muted">Belum ada stock keluar.</div>';
     box.innerHTML = '<div class="panel modern-section overview-kpi-panel">' +
-      '<div class="panel-head"><div><h2>Overview Operasional ' + (role === 'owner' ? 'Owner' : 'Admin') + '</h2><p class="muted mini-desc">Ringkasan motor, pembelian, dan fast moving stock.</p></div></div>' +
+      '<div class="panel-head"><div><h2>Overview Operasional ' + (role === 'owner' ? 'Owner' : 'Admin') + '</h2><p class="muted mini-desc">Ringkasan motor, lokasi HQ/Canggu, pembelian, dan fast moving stock.</p></div></div>' +
       '<div class="overview-kpi-grid">' +
       '<div class="metric soft"><span>Total Motor</span><strong>' + total + '</strong></div>' +
       '<div class="metric soft"><span>Ready</span><strong>' + ready + '</strong></div>' +
       '<div class="metric soft"><span>Maintenance</span><strong>' + maintenance + '</strong></div>' +
       '<div class="metric soft"><span>Ongoing</span><strong>' + ongoing + '</strong></div>' +
+      '<div class="metric soft"><span>Total di HQ</span><strong>' + (locStats.HQ ? locStats.HQ.total : 0) + '</strong><small>Ready ' + (locStats.HQ ? locStats.HQ.ready : 0) + ' · Maint ' + (locStats.HQ ? locStats.HQ.maintenance : 0) + '</small></div>' +
+      '<div class="metric soft"><span>Total di Canggu</span><strong>' + (locStats.Canggu ? locStats.Canggu.total : 0) + '</strong><small>Ready ' + (locStats.Canggu ? locStats.Canggu.ready : 0) + ' · Maint ' + (locStats.Canggu ? locStats.Canggu.maintenance : 0) + '</small></div>' +
       '<div class="metric soft wide"><span>Total Pengeluaran Pembelian</span><strong>' + formatRupiah(purchaseTotalSpend()) + '</strong><small>' + purchaseFrequency() + 'x pembelian/order approved</small></div>' +
       '<div class="metric soft wide"><span>Fast Moving Stock</span><div class="fast-list">' + fastHtml + '</div></div>' +
       '</div></div>';
@@ -973,6 +1052,7 @@
     $("mOwner").textContent = ownerReq;
     $("mEmptyStock").textContent = emptyStock;
     $("mStockOutToday").textContent = stockOutToday;
+    if ($("dashboardLocationSections")) $("dashboardLocationSections").innerHTML = locationSummaryHtml(true);
 
     var hint = {
       admin: "Dashboard Admin: approval dipisah dari gudang. Section gudang ada menu sendiri untuk stock keluar/masuk dan movement.",

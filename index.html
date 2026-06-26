@@ -107,6 +107,7 @@
           <div class="metric"><span>Stok Habis</span><strong id="mEmptyStock">0</strong></div>
           <div class="metric"><span>Stock Keluar Hari Ini</span><strong id="mStockOutToday">0</strong></div>
         </div>
+        <div id="dashboardLocationSections" class="status-section-grid location-summary-grid"></div>
         <div id="dashboardStatusSections" class="status-section-grid"></div>
         <div id="adminOwnerOverviewPanel" class="admin-owner-overview"></div>
         <div class="panel">
@@ -159,14 +160,31 @@
             <label>Tanggal Kirim / Terima Retur</label>
             <input id="transferDate" type="date" required />
 
-            <div class="grid-2 compact-grid">
-              <div>
-                <label>Dari Lokasi</label>
-                <input id="transferFrom" value="HQ" placeholder="Contoh: HQ" required />
+            <div class="mini-form-section">
+              <h3>Pengiriman Motor Ready</h3>
+              <div class="grid-2 compact-grid">
+                <div>
+                  <label>Dari Lokasi</label>
+                  <input id="transferSendFrom" value="HQ" placeholder="Contoh: HQ" required />
+                </div>
+                <div>
+                  <label>Ke Lokasi</label>
+                  <input id="transferSendTo" value="Canggu" placeholder="Contoh: Canggu" required />
+                </div>
               </div>
-              <div>
-                <label>Ke Lokasi</label>
-                <input id="transferTo" value="Canggu" placeholder="Contoh: Canggu" required />
+            </div>
+
+            <div class="mini-form-section">
+              <h3>Retur Motor Maintenance</h3>
+              <div class="grid-2 compact-grid">
+                <div>
+                  <label>Dari Lokasi</label>
+                  <input id="transferReturnFrom" value="Canggu" placeholder="Contoh: Canggu" required />
+                </div>
+                <div>
+                  <label>Ke Lokasi</label>
+                  <input id="transferReturnTo" value="HQ" placeholder="Contoh: HQ" required />
+                </div>
               </div>
             </div>
 
