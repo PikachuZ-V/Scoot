@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rental Motor Maintenance & Inventory</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script defer src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="config.js"></script>
+</head>
+<body>
+  <div class="mobile-backdrop" id="mobileBackdrop"></div>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">RM</div>
+        <div>
+          <strong>Rental Motor</strong>
+          <span>Maintenance System</span>
+        </div>
+      </div>
+
+      <div class="role-card">
+        <label>Mode User</label>
+        <select id="roleSelect">
+          <option value="admin">Admin</option>
+          <option value="owner">Owner</option>
+          <option value="mekanik">Mekanik</option>
+        </select>
+        <small id="storageMode">Demo mode</small>
+      </div>
+
+      <nav class="nav" id="nav">
+        <button data-page="dashboard" class="active">Dashboard</button>
+        <button data-page="monitor">Monitor Motor</button>
+        <button data-page="mechanic_request">Request Mekanik</button>
+        <button data-page="mechanic_status">Status Request</button>
+        <button data-page="mechanic_ongoing">Ongoing Maintenance</button>
+        <button data-page="mechanic_done">Selesai Maintenance</button>
+        <button data-page="mechanic_history">History Service</button>
+        <button data-page="admin">Approval Admin</button>
+        <button data-page="spareparts">Master Data & Barcode</button>
+        <button data-page="warehouse">Gudang / Stock</button>
+        <button data-page="owner">Approval Owner</button>
+        <button data-page="overview">Overview Keseluruhan</button>
+        <button data-page="reports">Laporan</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="title-row">
+          <button class="hamburger" id="menuToggle" aria-label="Buka menu">☰</button>
+          <div>
+            <h1 id="pageTitle">Dashboard</h1>
+            <p id="pageSubtitle">Ringkasan request, stok, dan pekerjaan motor.</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button class="ghost" id="exportJsonBtn">Export Backup</button>
+          <button class="danger" id="resetDemoBtn">Reset Demo</button>
+        </div>
+      </header>
+
+      <section id="dashboard" class="page active">
+        <div class="notice compact" id="dashboardRoleHint"></div>
+        <div class="metric-grid">
+          <div class="metric"><span>Request Baru</span><strong id="mRequestNew">0</strong></div>
+          <div class="metric"><span>Butuh Owner</span><strong id="mOwner">0</strong></div>
+          <div class="metric"><span>Stok Habis</span><strong id="mEmptyStock">0</strong></div>
+          <div class="metric"><span>Stock Keluar Hari Ini</span><strong id="mStockOutToday">0</strong></div>
+        </div>
+        <div id="dashboardStatusSections" class="status-section-grid"></div>
+        <div id="adminOwnerOverviewPanel" class="admin-owner-overview"></div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2 id="dashboardListTitle">Request Per Motor</h2>
+            <input id="dashboardSearch" placeholder="Cari motor / sparepart / status..." />
+          </div>
+          <div id="dashboardList" class="card-list"></div>
+        </div>
+        <div class="panel whatsapp-panel">
+          <div class="panel-head">
+            <div>
+              <h2>WhatsApp Auto Report</h2>
+              <p class="muted mini-desc">Demo log pengiriman otomatis ke grup laporan untuk request barang dan motor ready. Production memakai backend/webhook WhatsApp.</p>
+            </div>
+            <span class="tag green" id="waAutoStatus">Auto ON</span>
+          </div>
+          <div id="waLogList" class="wa-log-list"></div>
+        </div>
+      </section>
+
+
+      <section id="monitor" class="page">
+        <div class="panel monitor-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Monitor Status Motor</h2>
+              <p class="muted mini-desc">Pantau motor ready, maintenance, dan ongoing maintenance. Semua role bisa melihat, hanya admin yang mengubah data master/status lewat flow approval.</p>
+            </div>
+            <input id="monitorSearch" placeholder="Cari no motor / plat / tipe / kerusakan..." />
+          </div>
+
+          <div class="section-tabs monitor-tabs" role="tablist" aria-label="Monitor Motor">
+            <button type="button" class="tab-btn active" data-monitor-tab="ready" role="tab" aria-selected="true">Ready</button>
+            <button type="button" class="tab-btn" data-monitor-tab="maintenance" role="tab" aria-selected="false">Maintenance</button>
+            <button type="button" class="tab-btn" data-monitor-tab="ongoing_maintenance" role="tab" aria-selected="false">Ongoing Maintenance</button>
+          </div>
+
+          <div id="motorMonitorSummary" class="status-section-grid monitor-summary"></div>
+          <div id="motorMonitorList" class="monitor-grid"></div>
+        </div>
+      </section>
+
+      <section id="mechanic_request" class="page">
+        <div class="section-tabs" role="tablist" aria-label="Menu Mekanik">
+          <button type="button" class="tab-btn active" data-mechanic-tab="request" role="tab" aria-selected="true">Form Request Sparepart</button>
+          <button type="button" class="tab-btn" data-mechanic-tab="selftake" role="tab" aria-selected="false">Stock Keluar Cepat / Ambil Sendiri</button>
+        </div>
+
+        <div id="mechanicRequestTab" class="mechanic-tab-content active">
+          <form id="mechanicForm" class="panel form-panel mechanic-form-only">
+            <h2>Report Kerusakan Motor</h2>
+            <label>Nama Mekanik</label>
+            <input id="mechanicName" placeholder="Contoh: Budi / Danda / Vanda" value="Mekanik Demo" required />
+
+            <label>No Motor</label>
+            <div class="inline-field">
+              <input id="reportMotorCode" placeholder="Contoh: 079" required />
+              <button type="button" class="ghost" data-scan-target="reportMotorCode">Scan</button>
+            </div>
+            <div id="motorLookup" class="lookup-box muted">Data motor akan muncul di sini.</div>
+            <div id="driveFolderHint" class="lookup-box muted">Folder Google Drive akan dibuat otomatis setelah report disimpan.</div>
+
+            <label>Kategori Kerusakan</label>
+            <select id="damageCategory">
+              <option>Mesin</option>
+              <option>Rem</option>
+              <option>Ban</option>
+              <option>Kelistrikan</option>
+              <option>Body</option>
+              <option>Lainnya</option>
+            </select>
+
+            <label>Catatan Kerusakan / Rangkuman</label>
+            <textarea id="damageNotes" rows="4" placeholder="Contoh: Ban belakang habis, rem kurang pakem. Rangkuman umum dari hasil pengecekan."></textarea>
+
+            <label>Upload Foto / Video dari Galeri</label>
+            <div class="hint">Saat production, file akan otomatis dikirim ke Google Drive berdasarkan nomor motor, tanggal report, dan kode report.</div>
+            <input id="mediaUpload" type="file" accept="image/*,video/*" multiple />
+            <div id="mediaPreviewList" class="media-list"></div>
+
+            <label>Link Tambahan Foto / Video</label>
+            <textarea id="mediaExtraLinks" rows="2" placeholder="Opsional. Paste link Drive/WhatsApp/YouTube, satu link per baris."></textarea>
+
+            <h3>Request Sparepart</h3>
+            <div id="requestItems"></div>
+            <button type="button" class="secondary" id="addRequestItemBtn">+ Tambah Sparepart</button>
+            <button type="submit" class="primary">Ajukan Request</button>
+          </form>
+        </div>
+
+        <div id="mechanicSelfTakeTab" class="mechanic-tab-content">
+          <form id="mechanicSelfTakeForm" class="panel form-panel mechanic-form-only">
+            <h2>Stock Keluar Cepat / Ambil Sendiri</h2>
+            <div class="lookup-box muted">
+              Dipakai saat admin/gudang belum sempat proses. Stok langsung berkurang, lalu masuk ke review admin untuk dicocokkan dengan bukti ambil.
+            </div>
+
+            <label>Nama Mekanik</label>
+            <input id="selfTakeMechanicName" placeholder="Contoh: Budi / Danda / Vanda" value="Mekanik Demo" required />
+
+            <label>No Motor</label>
+            <div class="inline-field">
+              <input id="selfTakeMotorCode" placeholder="Contoh: 079" required />
+              <button type="button" class="ghost" data-scan-target="selfTakeMotorCode">Scan</button>
+            </div>
+
+            <label>Kode Barcode Sparepart</label>
+            <div class="inline-field">
+              <input id="selfTakePartCode" placeholder="Contoh: SP-0001" required />
+              <button type="button" class="ghost" data-scan-target="selfTakePartCode">Scan</button>
+            </div>
+            <div id="selfTakePartLookup" class="lookup-box muted">Data sparepart akan muncul di sini.</div>
+
+            <label>Qty Diambil</label>
+            <input id="selfTakeQty" type="number" min="1" value="1" required />
+
+            <label>Catatan Ambil / Rangkuman Kerusakan</label>
+            <textarea id="selfTakeNotes" rows="3" placeholder="Contoh: Motor 079 butuh kampas rem belakang, barang diambil dulu karena urgent."></textarea>
+
+            <label>Bukti Ambil Sparepart</label>
+            <div class="hint">Upload foto/video barang yang diambil. Admin akan crosscheck di menu Gudang.</div>
+            <input id="selfTakeMediaUpload" type="file" accept="image/*,video/*" multiple />
+            <div id="selfTakeMediaPreviewList" class="media-list"></div>
+
+            <label>Link Tambahan Bukti</label>
+            <textarea id="selfTakeExtraLinks" rows="2" placeholder="Opsional. Paste link Drive/WhatsApp, satu link per baris."></textarea>
+
+            <button type="submit" class="primary">Generate Ambil Mandiri</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="mechanic_status" class="page">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Status Request Saya</h2>
+            <span class="tag gray" id="mechanicOpenCount">0 aktif</span>
+          </div>
+          <div id="mechanicOpenList" class="card-list"></div>
+        </div>
+      </section>
+
+      <section id="mechanic_ongoing" class="page">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Ongoing Maintenance</h2>
+            <span class="tag gray" id="mechanicOngoingCount">0 proses</span>
+          </div>
+          <div id="mechanicOngoingList" class="card-list"></div>
+        </div>
+      </section>
+
+      <section id="mechanic_done" class="page">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Selesai Maintenance</h2>
+            <div class="header-actions"><button type="button" class="secondary" id="exportCompletedCsvBtn">Export ke GSheet CSV</button><span class="tag gray" id="mechanicDoneCount">0 selesai</span></div>
+          </div>
+          <div id="mechanicCompletedList" class="card-list"></div>
+        </div>
+      </section>
+
+      <section id="mechanic_history" class="page">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>History Service Saya</h2>
+            <span class="tag gray" id="mechanicHistoryCount">0 report</span>
+          </div>
+          <div id="mechanicHistoryList" class="card-list"></div>
+        </div>
+      </section>
+
+      <section id="admin" class="page">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Approval Admin</h2>
+              <p class="muted mini-desc">Review request mekanik, ajukan owner jika perlu beli, atau arahkan ke stock keluar.</p>
+            </div>
+            <select id="adminStatusFilter">
+              <option value="all">Semua</option>
+              <option value="new">Request Baru</option>
+              <option value="owner">Menunggu Owner</option>
+              <option value="warehouse">Gudang / Stock</option>
+              <option value="done_revision">Ongoing / Selesai / Revisi</option>
+            </select>
+          </div>
+          <div id="adminRequestList" class="card-list"></div>
+        </div>
+      </section>
+
+      <section id="warehouse" class="page">
+        <div class="warehouse-hero panel">
+          <div>
+            <h2>Gudang / Stock Control</h2>
+            <p class="muted">Section admin paling bawah untuk review ambil mandiri, stock masuk, dan history movement.</p>
+          </div>
+          <div class="warehouse-mini-metrics">
+            <span><b id="wSelfTakePending">0</b><small>Ambil mandiri perlu review</small></span>
+            <span><b id="wStockOutToday">0</b><small>Stock keluar hari ini</small></span>
+            <span><b id="wLowStock">0</b><small>Stok habis/menipis</small></span>
+          </div>
+        </div>
+
+        <div class="split-grid warehouse-grid">
+          <div class="panel form-panel">
+            <h2>Review Mekanik Ambil Sendiri</h2>
+            <p class="muted mini-desc">Cocokkan barang yang diambil dengan bukti foto/video. Jika ditolak, stok akan dikembalikan di demo.</p>
+            <div id="selfTakeReviewList" class="card-list"></div>
+          </div>
+
+          <form id="stockInForm" class="panel form-panel">
+            <h2>Stock Masuk Manual</h2>
+            <label>Kode Barcode Sparepart</label>
+            <div class="inline-field">
+              <input id="stockInPartCode" placeholder="Contoh: SP-0001" required />
+              <button type="button" class="ghost" data-scan-target="stockInPartCode">Scan</button>
+            </div>
+            <label>Qty Masuk</label>
+            <input id="stockInQty" type="number" min="1" value="1" required />
+            <label>Catatan</label>
+            <textarea id="stockInNotes" rows="3" placeholder="Contoh: Pembelian datang / koreksi stok opname."></textarea>
+            <button type="submit" class="primary">Simpan Stock Masuk</button>
+          </form>
+        </div>
+
+        <div class="panel modern-section">
+          <div class="panel-head">
+            <h2>History Stock Movement</h2>
+            <input id="movementSearch" placeholder="Cari kode / sparepart / motor..." />
+          </div>
+          <div id="movementList" class="table-wrap"></div>
+        </div>
+      </section>
+
+      <section id="owner" class="page">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Approval Owner Untuk Order Sparepart</h2>
+            <input id="ownerSearch" placeholder="Cari motor / sparepart..." />
+          </div>
+          <div id="ownerApprovalList" class="card-list"></div>
+        </div>
+      </section>
+
+      <section id="spareparts" class="page">
+        <div class="section-tabs" role="tablist" aria-label="Master Data">
+          <button type="button" class="tab-btn active" data-master-tab="sparepart" role="tab" aria-selected="true">Master Sparepart & Barcode</button>
+          <button type="button" class="tab-btn" data-master-tab="motor" role="tab" aria-selected="false">Master Motor</button>
+        </div>
+        <div id="masterSparepartTab" class="master-tab-content active">
+        <div class="split-grid">
+          <form id="sparepartForm" class="panel form-panel">
+            <h2>Tambah / Update Sparepart</h2>
+            <input type="hidden" id="sparepartEditId" />
+
+            <div class="lookup-box muted">
+              Kode barcode sparepart dibuat otomatis oleh sistem. Rak/ruangan hanya untuk info lokasi, tidak ada barcode rak.
+              <div id="sparepartCodePreview" class="code-preview">Kode baru: SP-0001</div>
+            </div>
+
+            <div class="import-box">
+              <button type="button" class="ghost" id="downloadSparepartTemplateBtn">Download Template Sparepart</button>
+              <label class="file-label">Import Master Sparepart CSV/XLSX</label>
+              <input id="sparepartImportFile" type="file" accept=".csv,.xlsx,.xls" />
+            </div>
+
+            <label>Nama Sparepart</label>
+            <input id="sparepartName" placeholder="Contoh: Kampas Rem Belakang" required />
+
+            <label>Satuan</label>
+            <input id="sparepartUnit" placeholder="pcs / set / botol" value="pcs" />
+
+            <label>Stok Awal / Update Stok</label>
+            <input id="sparepartStock" type="number" min="0" value="0" />
+
+            <label>Minimum Stock</label>
+            <input id="sparepartMinStock" type="number" min="0" value="1" />
+
+            <div class="location-grid">
+              <div>
+                <label>Ruangan</label>
+                <input id="sparepartRoom" placeholder="Gudang Sparepart 1" />
+              </div>
+              <div>
+                <label>Rak / Box / Posisi</label>
+                <input id="sparepartRack" placeholder="Rak 1 / Box Rem / Lemari Ban" />
+              </div>
+            </div>
+
+            <label>Link Shopee Default</label>
+            <input id="sparepartLink" placeholder="https://shopee.co.id/..." />
+
+            <button type="submit" class="primary">Simpan Sparepart</button>
+          </form>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Daftar Sparepart & Print Barcode</h2>
+              <input id="sparepartSearch" placeholder="Cari sparepart..." />
+            </div>
+            <div id="sparepartList" class="table-wrap"></div>
+          </div>
+        </div>
+        </div>
+
+        <div id="masterMotorTab" class="master-tab-content">
+        <div class="split-grid modern-section master-motor-section">
+          <form id="motorForm" class="panel form-panel">
+            <h2>Master Motor</h2>
+            <input type="hidden" id="motorEditId" />
+            <div class="import-box">
+              <button type="button" class="ghost" id="downloadMotorTemplateBtn">Download Template Motor</button>
+              <label class="file-label">Import Master Motor CSV/XLSX</label>
+              <input id="motorImportFile" type="file" accept=".csv,.xlsx,.xls" />
+            </div>
+            <label>No Motor / Barcode Motor</label>
+            <input id="motorCode" placeholder="Contoh: 079" required />
+            <label>Plat Nomor</label>
+            <input id="plateNumber" placeholder="DK 1234 XX" />
+            <label>Tipe Motor</label>
+            <input id="motorType" placeholder="Beat / Scoopy / Vario" />
+            <label>Warna</label>
+            <input id="motorColor" placeholder="Hitam / Merah" />
+            <label>Outlet</label>
+            <input id="motorOutlet" placeholder="Canggu / Karawaci" />
+            <button type="submit" class="primary">Simpan Motor</button>
+          </form>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Daftar Motor</h2>
+              <input id="motorSearch" placeholder="Cari motor..." />
+            </div>
+            <div id="motorList" class="table-wrap"></div>
+          </div>
+        </div>
+        </div>
+      </section>
+
+      <section id="overview" class="page">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Overview Keseluruhan</h2>
+            <input id="overviewSearch" placeholder="Cari motor / sparepart / status..." />
+          </div>
+          <div id="overviewSummary" class="status-section-grid"></div>
+          <div id="overviewList" class="card-list"></div>
+        </div>
+      </section>
+
+      <section id="reports" class="page">
+        <div class="panel">
+          <h2>Laporan Owner</h2>
+          <div id="reportSummary" class="report-grid"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+
+  <dialog id="checkoutDialog" class="checkout-dialog">
+    <form id="checkoutProofForm" method="dialog" class="checkout-form">
+      <div class="dialog-head">
+        <h2 id="checkoutDialogTitle">Bukti Before Checkout</h2>
+        <button type="button" id="closeCheckoutBtn" class="ghost">Tutup</button>
+      </div>
+      <p class="hint">Admin upload SS Shopee/Tokopedia mobile sebelum checkout. Gemini OCR otomatis membaca SS dan mengisi breakdown biaya sebagai draft. Admin tetap validasi angka sebelum dikirim ke Owner.</p>
+
+      <div class="checkout-layout">
+        <div>
+          <label>Marketplace</label>
+          <select id="checkoutMarketplace">
+            <option>Shopee</option>
+            <option>Tokopedia</option>
+            <option>Lainnya</option>
+          </select>
+
+          <label>Upload SS Before Checkout</label>
+          <input id="checkoutProofFile" type="file" accept="image/*" />
+          <div id="checkoutProofPreview" class="media-list"></div>
+
+          <div class="lookup-box gemini-demo-box">
+            <b>Gemini OCR Demo</b>
+            <div class="hint">Untuk tes lokal/demo tanpa backend, isi Gemini API Key di sini. Untuk production, API key tetap wajib disimpan di backend/serverless.</div>
+            <div class="inline-field">
+              <input id="demoGeminiApiKey" type="password" placeholder="Paste Gemini API Key untuk demo lokal" autocomplete="off" />
+              <button type="button" class="ghost" id="saveDemoGeminiKeyBtn">Simpan</button>
+            </div>
+            <div class="card-sub" id="geminiDemoStatus">Gemini demo key belum disimpan.</div>
+          </div>
+
+          <button type="button" class="secondary full-lite" id="runOcrBtn">Gemini OCR & Isi Kolom</button>
+
+          <label>Raw OCR / Catatan Bacaan</label>
+          <textarea id="checkoutOcrText" rows="4" placeholder="Hasil Gemini OCR + breakdown otomatis akan muncul di sini dan bisa dikoreksi manual."></textarea>
+        </div>
+
+        <div>
+          <div class="lookup-box muted">
+            <b>Item dari request</b>
+            <div id="checkoutItemList"></div>
+          </div>
+
+          <label>Subtotal Barang</label>
+          <input id="checkoutSubtotal" type="number" min="0" value="0" />
+          <label>Ongkir</label>
+          <input id="checkoutShipping" type="number" min="0" value="0" />
+          <label>Asuransi Barang</label>
+          <select id="checkoutInsuranceEnabled">
+            <option value="yes">Pakai asuransi</option>
+            <option value="no">Tidak pakai asuransi</option>
+          </select>
+          <input id="checkoutInsurance" type="number" min="0" value="0" placeholder="Biaya asuransi jika dipakai" />
+          <label>Estimasi Pengiriman</label>
+          <input id="checkoutDeliveryEstimate" placeholder="Contoh: Tiba 2-3 hari / Dapatkan tanggal 21-24 Apr" />
+          <label>Estimasi Hari</label>
+          <input id="checkoutDeliveryDays" type="number" min="0" value="0" placeholder="Contoh: 3" />
+          <label>Biaya Layanan / Lainnya</label>
+          <input id="checkoutServiceFee" type="number" min="0" value="0" />
+          <label>Diskon / Voucher</label>
+          <input id="checkoutDiscount" type="number" min="0" value="0" />
+          <label>Total Sebelum CO</label>
+          <input id="checkoutTotal" type="number" readonly value="0" />
+          <div class="total-preview">Total before checkout: <b id="checkoutTotalPreview">Rp 0</b></div>
+
+          <label>Catatan Admin Untuk Owner</label>
+          <textarea id="checkoutNote" rows="3" placeholder="Contoh: Total sudah sesuai SS Shopee, belum checkout menunggu approval owner."></textarea>
+        </div>
+      </div>
+
+      <div class="card-actions dialog-actions">
+        <button type="button" class="ghost" id="cancelCheckoutBtn">Batal</button>
+        <button type="submit" class="primary dialog-primary">Simpan & Ajukan ke Owner</button>
+      </div>
+    </form>
+  </dialog>
+
+
+  <dialog id="receiveDialog" class="checkout-dialog receive-dialog">
+    <form id="receiveProofForm" method="dialog" class="checkout-form">
+      <div class="dialog-head">
+        <h2 id="receiveDialogTitle">Bukti Barang Orderan Tiba</h2>
+        <button type="button" id="closeReceiveBtn" class="ghost">Tutup</button>
+      </div>
+      <p class="hint">Admin upload foto barang fisik yang diterima dan SS halaman pesanan Shopee/Tokopedia. Gemini OCR membaca nomor pesanan, nama barang, dan qty, lalu sistem membandingkan dengan item request.</p>
+      <div class="checkout-layout">
+        <div>
+          <label>Upload Foto Barang Diterima</label>
+          <input id="receiveGoodsFile" type="file" accept="image/*,video/*" multiple />
+          <div id="receiveGoodsPreview" class="media-list"></div>
+
+          <label>Upload SS Halaman Pesanan Marketplace</label>
+          <input id="receiveOrderFile" type="file" accept="image/*" />
+          <div id="receiveOrderPreview" class="media-list"></div>
+
+          <button type="button" class="secondary full-lite" id="runReceiveOcrBtn">Gemini OCR Pesanan & Cocokkan Qty</button>
+
+          <label>Raw OCR Pesanan / Catatan Bacaan</label>
+          <textarea id="receiveOcrText" rows="5" placeholder="Hasil OCR nomor pesanan, nama barang, qty, dan hasil perbandingan akan muncul di sini."></textarea>
+        </div>
+        <div>
+          <div class="lookup-box muted">
+            <b>Item yang seharusnya diterima</b>
+            <div id="receiveExpectedItems"></div>
+          </div>
+
+          <label>No Pesanan</label>
+          <input id="receiveOrderNumber" placeholder="Contoh: 250626ABC123" />
+
+          <label>Status Kecocokan Barang</label>
+          <select id="receiveMatchStatus">
+            <option value="match">Cocok</option>
+            <option value="partial">Sebagian / Perlu cek manual</option>
+            <option value="mismatch">Tidak cocok</option>
+          </select>
+
+          <label>Ringkasan Hasil Cocokkan</label>
+          <textarea id="receiveMatchSummary" rows="6" placeholder="Contoh: Ban Belakang 90/90 qty order 1, terbaca qty 1, cocok."></textarea>
+
+          <label>Catatan Admin Penerimaan</label>
+          <textarea id="receiveAdminNote" rows="3" placeholder="Contoh: Barang fisik sudah diterima, qty sesuai, siap masuk gudang."></textarea>
+        </div>
+      </div>
+      <div class="card-actions dialog-actions">
+        <button type="button" class="ghost" id="cancelReceiveBtn">Batal</button>
+        <button type="submit" class="primary dialog-primary">Simpan Bukti & Terima Gudang</button>
+      </div>
+    </form>
+  </dialog>
+
+
+  <dialog id="motorDetailDialog" class="motor-detail-dialog">
+    <div class="dialog-head">
+      <h2 id="motorDetailTitle">Detail Motor</h2>
+      <button type="button" id="closeMotorDetailBtn" class="ghost">Tutup</button>
+    </div>
+    <div id="motorDetailBody" class="motor-detail-body"></div>
+  </dialog>
+
+  <dialog id="mediaPreviewDialog" class="media-preview-dialog">
+    <div class="dialog-head">
+      <h2 id="mediaPreviewTitle">Preview File</h2>
+      <button type="button" id="closeMediaPreviewBtn" class="ghost">Tutup</button>
+    </div>
+    <div id="mediaPreviewBody" class="media-preview-body"></div>
+    <div id="mediaPreviewNote" class="media-preview-note"></div>
+  </dialog>
+
+  <dialog id="scanDialog">
+    <div class="dialog-head">
+      <h2>Scan Barcode / Kode</h2>
+      <button id="closeScanBtn" class="ghost">Tutup</button>
+    </div>
+    <div id="reader"></div>
+    <p class="hint">Kalau kamera tidak support di browser, ketik manual kodenya.</p>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
