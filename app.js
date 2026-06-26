@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "rental_motor_system_v13";
+  var STORAGE_KEY = "rental_motor_system_v16_production";
   var state = null;
   var activePage = "dashboard";
   var scanTargetInputId = null;
@@ -14,6 +14,13 @@
   var pendingReceiveRequestId = null;
   var receiveGoodsMedia = [];
   var receiveOrderScreenshot = null;
+  var cfg = window.APP_CONFIG || {};
+  var supabaseClient = null;
+  var currentSession = null;
+  var currentProfile = null;
+  var cloudSaveTimer = null;
+  var hasBoundAuthEvents = false;
+  var userAccessRows = [];
 
   var titles = {
     dashboard: ["Dashboard", "Ringkasan request, stok, dan pekerjaan motor sesuai role user."],
@@ -28,7 +35,8 @@
     owner: ["Approval Owner", "Approve, reject, atau minta revisi order sparepart sebelum pembelian."],
     overview: ["Overview Keseluruhan", "Pantauan read-only semua request, motor service, dan status barang untuk owner."],
     spareparts: ["Master Data & Barcode", "Master sparepart, barcode barang, lokasi simpan, dan data motor."],
-    reports: ["Laporan", "Rekap stok, motor, request, dan pemakaian sparepart."]
+    reports: ["Laporan", "Rekap stok, motor, request, dan pemakaian sparepart."],
+    users: ["User Management", "Owner mendaftarkan Gmail/email user dan menentukan role akses."]
   };
 
   var statusLabel = {
@@ -52,7 +60,7 @@
 
   var rolePages = {
     admin: ["dashboard", "monitor", "admin", "warehouse", "spareparts"],
-    owner: ["dashboard", "monitor", "owner", "overview", "reports"],
+    owner: ["dashboard", "monitor", "owner", "overview", "reports", "users"],
     mekanik: ["dashboard", "monitor", "mechanic_request", "mechanic_status", "mechanic_ongoing", "mechanic_done", "mechanic_history"]
   };
 
@@ -102,12 +110,24 @@
     });
     return "SP-" + String(max + 1).padStart(4, "0");
   }
-  function currentRole() { return $("roleSelect").value || "admin"; }
-  function currentDemoUser() {
-    var r = currentRole();
-    if (r === "mekanik") return ($("mechanicName") && $("mechanicName").value) || "Mekanik Demo";
-    if (r === "owner") return "Owner Demo";
-    return "Admin Demo";
+  function currentRole() {
+    if (currentProfile && currentProfile.role) return currentProfile.role;
+    var select = $("roleSelect");
+    return select ? select.value || "viewer" : "viewer";
+  }
+  function currentUserName() {
+    if (currentProfile && currentProfile.full_name) return currentProfile.full_name;
+    if (currentSession && currentSession.user && currentSession.user.email) return currentSession.user.email;
+    return "User";
+  }
+  function currentUserEmail() {
+    return currentSession && currentSession.user ? currentSession.user.email || "" : "";
+  }
+  function setSyncStatus(text, cls) {
+    var el = $("syncStatus");
+    if (!el) return;
+    el.textContent = text;
+    el.className = "sync-pill" + (cls ? " " + cls : "");
   }
 
   function defaultData() {
@@ -183,7 +203,7 @@
     return data;
   }
 
-  function load() {
+  function loadLocal() {
     var raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       var old12 = localStorage.getItem("rental_motor_system_v12");
@@ -222,7 +242,61 @@
     }
     try { return migrateData(JSON.parse(raw)); } catch (e) { return defaultData(); }
   }
-  function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+  function saveLocal() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+  function save() {
+    if (cfg.useSupabase && supabaseClient && currentSession) {
+      scheduleCloudSave();
+      return;
+    }
+    if (cfg.allowLocalFallback) saveLocal();
+  }
+  function scheduleCloudSave() {
+    if (!state || !supabaseClient) return;
+    setSyncStatus("Menyimpan...", "saving");
+    clearTimeout(cloudSaveTimer);
+    cloudSaveTimer = setTimeout(function () { saveCloudState(); }, 450);
+  }
+  async function saveCloudState() {
+    if (!supabaseClient || !currentSession || !state) return;
+    try {
+      var payload = {
+        id: "main",
+        data: state,
+        updated_at: new Date().toISOString(),
+        updated_by: currentSession.user.id
+      };
+      var res = await supabaseClient.from("app_state").upsert(payload, { onConflict: "id" });
+      if (res.error) throw res.error;
+      setSyncStatus("Tersimpan di Supabase", "ok");
+    } catch (err) {
+      console.error(err);
+      setSyncStatus("Gagal simpan: " + (err.message || err), "error");
+    }
+  }
+  async function loadCloudState() {
+    if (!supabaseClient || !currentSession) return defaultData();
+    setSyncStatus("Mengambil data...", "saving");
+    var res = await supabaseClient.from("app_state").select("data").eq("id", "main").maybeSingle();
+    if (res.error) throw res.error;
+    if (res.data && res.data.data) {
+      setSyncStatus("Data Supabase aktif", "ok");
+      return migrateData(res.data.data);
+    }
+    var fresh = migrateData(defaultData());
+    await supabaseClient.from("app_state").upsert({ id: "main", data: fresh, updated_at: new Date().toISOString(), updated_by: currentSession.user.id }, { onConflict: "id" });
+    setSyncStatus("Data awal dibuat", "ok");
+    return fresh;
+  }
+  async function reloadCloudData() {
+    try {
+      state = await loadCloudState();
+      renderAll();
+      setSyncStatus("Data direfresh", "ok");
+    } catch (err) {
+      alert("Gagal refresh data: " + (err.message || err));
+      setSyncStatus("Refresh gagal", "error");
+    }
+  }
 
   function findMotorByCode(code) {
     code = String(code || "").trim();
@@ -321,6 +395,7 @@
     renderReports();
     renderOperationalOverview();
     renderMechanicHistory();
+    renderUserAccess();
     updateSparepartCodePreview();
   }
 
@@ -760,7 +835,7 @@
     $("dashboardRoleHint").textContent = hint;
 
     var allRows = state.part_requests.slice().reverse().filter(function (r) {
-      if (role === "mekanik" && r.mechanic_name !== (($("mechanicName") && $("mechanicName").value) || "Mekanik Demo")) return false;
+      if (role === "mekanik" && r.mechanic_name !== currentUserName()) return false;
       if (role === "owner" && ["submitted_by_mechanic", "reviewed_by_admin", "waiting_owner_approval", "owner_approved", "owner_rejected", "purchase_pending", "received_by_warehouse", "stock_out_ready", "stock_out_generated", "self_take_waiting_review", "ongoing_maintenance", "revision_needed", "completed"].indexOf(r.status) < 0) return false;
       return true;
     });
@@ -979,7 +1054,7 @@
     ($("selfTakeExtraLinks").value || "").split("\n").map(function (x) { return x.trim(); }).filter(Boolean).forEach(function (link) {
       mediaItems.push({ id: uid("media"), media_type: "link", file_name: link, file_size: 0, file_url: link, drive_folder_path: driveFolder, note: "Link bukti tambahan ambil mandiri", created_at: todayIso() });
     });
-    var mechanicName = ($("selfTakeMechanicName").value || "Mekanik Demo").trim();
+    var mechanicName = ($("selfTakeMechanicName").value || currentUserName()).trim();
     var report = { id: uid("report"), report_code: reportCode, motor_id: motor.id, mechanic_name: mechanicName, damage_category: "Ambil Stock Cepat", damage_notes: ($("selfTakeNotes").value || "Ambil sparepart mandiri").trim(), media_items: mediaItems, drive_folder_path: driveFolder, status: "self_take_waiting_review", created_at: todayIso() };
     var request = { id: uid("req"), request_code: seq("REQ", state.part_requests, "request_code"), report_id: report.id, motor_id: motor.id, mechanic_name: mechanicName, status: "self_take_waiting_review", admin_review_by: "", admin_ready_by: "", admin_stock_out_by: "", owner_note: "", admin_note: "Menunggu admin crosscheck bukti ambil mandiri.", cancel_note: "", previous_status: "", stock_out_code: skCode, service_started_at: "", maintenance_done_date: "", ready_media_items: [], created_at: todayIso(), updated_at: todayIso() };
     var item = { id: uid("item"), request_id: request.id, sparepart_id: part.id, sparepart_code: part.sparepart_code, sparepart_name: part.name, qty_requested: qty, qty_approved: qty, stock_snapshot: Number(part.stock || 0), stock_status: "stock_available", recommended_purchase_link: part.default_purchase_link || "", estimated_price: 0, status: "self_take_waiting_review", current_stock: Number(part.stock || 0) - qty };
@@ -1034,7 +1109,7 @@
       id: uid("report"),
       report_code: reportCode,
       motor_id: motor.id,
-      mechanic_name: ($("mechanicName").value || "Mekanik Demo").trim(),
+      mechanic_name: ($("mechanicName").value || currentUserName()).trim(),
       damage_category: $("damageCategory").value,
       damage_notes: $("damageNotes").value.trim(),
       media_items: mediaItems,
@@ -1047,7 +1122,7 @@
       request_code: seq("REQ", state.part_requests, "request_code"),
       report_id: report.id,
       motor_id: motor.id,
-      mechanic_name: ($("mechanicName").value || "Mekanik Demo").trim(),
+      mechanic_name: ($("mechanicName").value || currentUserName()).trim(),
       status: "submitted_by_mechanic",
       admin_review_by: "",
       admin_ready_by: "",
@@ -1090,7 +1165,7 @@
     sendWhatsAppNotification("request_created", request);
     save();
     e.target.reset();
-    if ($("mechanicName")) $("mechanicName").value = "Mekanik Demo";
+    if ($("mechanicName")) $("mechanicName").value = currentUserName();
     selectedMedia = [];
     $("mediaPreviewList").innerHTML = "";
     $("requestItems").innerHTML = "";
@@ -1114,7 +1189,7 @@
   }
 
   function renderMechanicHistory() {
-    var mech = ($("mechanicName") && $("mechanicName").value) || ($("selfTakeMechanicName") && $("selfTakeMechanicName").value) || "Mekanik Demo";
+    var mech = ($("mechanicName") && $("mechanicName").value) || ($("selfTakeMechanicName") && $("selfTakeMechanicName").value) || currentUserName();
     var rows = state.part_requests.slice().reverse().filter(function (r) { return r.mechanic_name === mech; });
     var openRows = rows.filter(function (r) { return ["ongoing_maintenance", "completed", "cancelled"].indexOf(r.status) < 0; });
     var ongoingRows = rows.filter(function (r) { return r.status === "ongoing_maintenance"; });
@@ -1135,7 +1210,7 @@
     if (action === "start_service") {
       r.status = "ongoing_maintenance";
       r.service_started_at = todayIso();
-      r.service_by_mechanic = r.mechanic_name || currentDemoUser();
+      r.service_by_mechanic = r.mechanic_name || currentUserName();
       var motor = state.motors.find(function (m) { return m.id === r.motor_id; });
       if (motor) motor.status = "ongoing_maintenance";
       var report = state.damage_reports.find(function (d) { return d.id === r.report_id; });
@@ -1160,7 +1235,7 @@
         });
         r.status = "completed";
         r.completed_at = todayIso();
-        r.completed_by_mechanic = r.mechanic_name || currentDemoUser();
+        r.completed_by_mechanic = r.mechanic_name || currentUserName();
         r.maintenance_done_date = doneDate || todayDashed();
         r.ready_media_items = media;
         r.ready_note = note;
@@ -1424,7 +1499,7 @@
       }
     } catch (e) {}
     updateGeminiDemoStatus();
-    alert(key ? "Gemini API Key demo tersimpan di browser ini. Sekarang tombol Gemini OCR bisa dipakai di mode demo." : "Gemini API Key demo dikosongkan.");
+    alert(key ? "Konfigurasi OCR disimpan." : "Gemini API Key demo dikosongkan.");
   }
 
   function setOcrButtonBusy(isBusy, text) {
@@ -1772,7 +1847,7 @@
     if (config.geminiApiKey) {
       return runGeminiDirectCheckoutOcr(config);
     }
-    throw new Error("Gemini OCR belum dikonfigurasi. Isi Gemini API Key demo atau gunakan backend /api/gemini-checkout-ocr.");
+    throw new Error("Gemini OCR belum dikonfigurasi. Aktifkan backend /api/gemini-checkout-ocr dan environment GEMINI_API_KEY.");
   }
 
   async function runBackendCheckoutOcr(config) {
@@ -1807,7 +1882,7 @@
     }
     var config = getAppConfig();
     if ((config.ocrProvider === "gemini" || config.geminiProxyEndpoint || config.geminiApiKey) && !config.geminiProxyEndpoint && !config.geminiApiKey) {
-      alert("Untuk memakai Gemini di demo lokal, isi Gemini API Key demo dulu di kotak Gemini OCR Demo. Kalau sudah production, gunakan backend/serverless agar API key aman.");
+      alert("Gemini OCR belum aktif. Isi geminiProxyEndpoint dan GEMINI_API_KEY di backend/serverless.");
       return;
     }
     setOcrButtonBusy(true, "Gemini OCR membaca gambar...");
@@ -1824,9 +1899,9 @@
         payload = await runBrowserTesseractOcr(config);
         sourceLabel = "OCR Browser";
       } else {
-        // Demo mode tetap mengisi otomatis agar alurnya terlihat tanpa backend.
+        if (config.production) throw new Error("OCR production belum dikonfigurasi.");
         payload = { raw_text: demoOcrTextFromRequest() };
-        sourceLabel = "OCR Demo";
+        sourceLabel = "OCR Fallback";
       }
 
       var fallbackSubtotal = requestTotalEstimate(pendingOwnerRequestId);
@@ -1837,9 +1912,13 @@
       }
     } catch (err) {
       console.error(err);
-      alert("OCR belum berhasil membaca otomatis. Sistem akan pakai parser demo, lalu admin bisa koreksi manual.");
+      if (config.production) {
+        alert("OCR belum berhasil membaca otomatis. Silakan cek koneksi backend Gemini atau isi breakdown manual dari screenshot.");
+        return;
+      }
+      alert("OCR belum berhasil membaca otomatis. Sistem memakai fallback parser, lalu admin bisa koreksi manual.");
       var fallback = extractCheckoutBreakdownFromText(demoOcrTextFromRequest(), requestTotalEstimate(pendingOwnerRequestId));
-      applyCheckoutBreakdown(fallback, demoOcrTextFromRequest(), "OCR Demo Fallback");
+      applyCheckoutBreakdown(fallback, demoOcrTextFromRequest(), "OCR Fallback");
     } finally {
       setOcrButtonBusy(false, "Gemini OCR & Isi Kolom");
     }
@@ -1871,7 +1950,7 @@
       total_before_checkout: total
     };
     r.status = "waiting_owner_approval";
-    r.admin_owner_submit_by = currentDemoUser();
+    r.admin_owner_submit_by = currentUserName();
     r.admin_owner_submit_at = todayIso();
     r.updated_at = todayIso();
     var existing = state.owner_approvals.find(function (a) { return a.request_id === r.id && ["waiting_owner_approval", "revision_needed", "owner_rejected"].indexOf(a.status) >= 0; });
@@ -1880,7 +1959,7 @@
         id: uid("approval"),
         approval_code: seq("APR", state.owner_approvals, "approval_code"),
         request_id: r.id,
-        requested_by_admin: currentDemoUser(),
+        requested_by_admin: currentUserName(),
         status: "waiting_owner_approval",
         owner_note: "",
         created_at: todayIso(),
@@ -1888,7 +1967,7 @@
       };
       state.owner_approvals.push(existing);
     }
-    existing.requested_by_admin = currentDemoUser();
+    existing.requested_by_admin = currentUserName();
     existing.status = "waiting_owner_approval";
     existing.total_estimated_amount = total;
     existing.marketplace = $("checkoutMarketplace").value || "";
@@ -2002,7 +2081,7 @@
 
   function demoReceiveOcrPayload(r) {
     var items = getItemsForRequest(r.id).map(function (item) { return { name: item.sparepart_name, qty: Number(item.qty_requested || 0), variant: "", notes: "Demo terbaca dari item request" }; });
-    return { order_number: "DEMO-ORDER-" + todayYmd() + "-001", marketplace: "Shopee/Tokopedia", received_items: items, raw_text: "Demo OCR: nomor pesanan DEMO-ORDER-" + todayYmd() + "-001. Barang terbaca: " + items.map(function (i) { return i.name + " x" + i.qty; }).join(", "), confidence: 0.92, notes: "Demo mode. Admin tetap validasi foto barang fisik." };
+    return { order_number: "TEST-ORDER-" + todayYmd() + "-001", marketplace: "Shopee/Tokopedia", received_items: items, raw_text: "Fallback OCR: nomor pesanan TEST-ORDER-" + todayYmd() + "-001. Barang terbaca: " + items.map(function (i) { return i.name + " x" + i.qty; }).join(", "), confidence: 0.92, notes: "Fallback mode. Admin tetap validasi foto barang fisik." };
   }
 
   function compareReceivedItems(payload, r) {
@@ -2069,6 +2148,7 @@
         var text = ((((data.candidates || [])[0] || {}).content || {}).parts || []).map(function (p) { return p.text || ""; }).join("\n").trim();
         try { payload = JSON.parse(text); } catch (e) { payload = { raw_text: text, received_items: [] }; }
       } else {
+        if (config.production) throw new Error("Gemini receive OCR production belum dikonfigurasi.");
         payload = demoReceiveOcrPayload(r);
       }
       var cmp = compareReceivedItems(payload, r);
@@ -2104,10 +2184,10 @@
     a.received_match_summary = ($("receiveMatchSummary") ? $("receiveMatchSummary").value : "") || "";
     a.received_admin_note = ($("receiveAdminNote") ? $("receiveAdminNote").value : "") || "";
     a.received_ocr_text = ($("receiveOcrText") ? $("receiveOcrText").value : "") || "";
-    a.received_by_admin = currentDemoUser();
+    a.received_by_admin = currentUserName();
     a.received_at = todayIso();
     if (a.received_match_status !== "match" && !confirm("Status penerimaan belum cocok penuh. Tetap terima gudang dan update stok?")) return;
-    r.admin_received_by = currentDemoUser();
+    r.admin_received_by = currentUserName();
     receiveWarehouse(r);
     save();
     if ($("receiveDialog")) $("receiveDialog").close();
@@ -2128,7 +2208,7 @@
     r.updated_at = todayIso();
     if (action === "review") {
       r.status = "reviewed_by_admin";
-      r.admin_review_by = currentDemoUser();
+      r.admin_review_by = currentUserName();
       r.admin_review_at = todayIso();
       r.admin_note = prompt("Catatan review admin (opsional):", r.admin_note || "") || r.admin_note || "";
     }
@@ -2144,16 +2224,16 @@
           if (!confirm("Ada stok kosong/kurang. Biasanya harus ajukan ke owner dulu. Tetap set siap stock keluar?")) return;
         }
         r.status = "stock_out_ready";
-        r.admin_ready_by = currentDemoUser();
+        r.admin_ready_by = currentUserName();
         r.admin_ready_at = todayIso();
       }
     }
-    if (action === "purchase") { r.status = "purchase_pending"; r.admin_purchase_by = currentDemoUser(); }
+    if (action === "purchase") { r.status = "purchase_pending"; r.admin_purchase_by = currentUserName(); }
     if (action === "received") { openReceiveDialog(r); return; }
     if (action === "stockout") generateStockOutFromRequest(r);
     if (action === "complete") {
       r.status = "completed";
-      r.completed_by_admin = currentDemoUser();
+      r.completed_by_admin = currentUserName();
       var report = state.damage_reports.find(function (d) { return d.id === r.report_id; });
       if (report) { report.status = "completed"; report.completed_at = todayIso(); }
     }
@@ -2167,7 +2247,7 @@
     }
     if (action === "reopen") r.status = r.stock_out_code ? "stock_out_generated" : "reviewed_by_admin";
     if (action === "cancel") {
-      if (r.stock_out_code && !confirm("Request ini sudah punya stock keluar " + r.stock_out_code + ". Membatalkan tidak otomatis mengembalikan stok di demo. Lanjut batalkan?")) return;
+      if (r.stock_out_code && !confirm("Request ini sudah punya stock keluar " + r.stock_out_code + ". Membatalkan tidak otomatis mengembalikan stok jika stock keluar sudah dibuat. Lanjut batalkan?")) return;
       var reason = prompt("Alasan pembatalan:", r.cancel_note || "");
       if (reason === null) return;
       r.previous_status = r.status;
@@ -2264,7 +2344,7 @@
     r.stock_out_code = skCode;
     var motor = state.motors.find(function (m) { return m.id === r.motor_id; });
     if (motor) motor.status = "maintenance";
-    r.admin_stock_out_by = currentDemoUser();
+    r.admin_stock_out_by = currentUserName();
     r.admin_stock_out_at = todayIso();
     r.status = "stock_out_generated";
     alert("Stock keluar berhasil dibuat: " + skCode);
@@ -2362,16 +2442,16 @@
     var rows = state.spareparts.filter(function (p) {
       return (p.name + " " + p.sparepart_code + " " + p.room + " " + p.rack).toLowerCase().indexOf(q) >= 0;
     });
-    var html = '<table><thead><tr><th>Barcode</th><th>Nama</th><th>Stok</th><th>Lokasi</th><th>Link</th><th>Aksi</th></tr></thead><tbody>';
+    var html = '<table class="master-table"><thead><tr><th>Barcode</th><th>Nama</th><th>Stok</th><th>Lokasi</th><th>Link</th><th>Aksi</th></tr></thead><tbody>';
     rows.forEach(function (p) {
       var stockCls = Number(p.stock) <= 0 ? "red" : (Number(p.stock) <= Number(p.minimum_stock) ? "yellow" : "green");
       html += '<tr>' +
-        '<td><div class="barcode-box">' + code39Svg(p.sparepart_code, 190, 70) + '</div><br><small>' + esc(p.sparepart_code) + '</small></td>' +
-        '<td><b>' + esc(p.name) + '</b><br><small>' + esc(p.unit) + '</small></td>' +
-        '<td><span class="tag ' + stockCls + '">' + esc(p.stock) + '</span><br><small>Min: ' + esc(p.minimum_stock) + '</small></td>' +
-        '<td>' + esc(p.room || "-") + '<br><small>' + esc(p.rack || "-") + '</small></td>' +
-        '<td>' + (p.default_purchase_link ? '<a target="_blank" href="' + esc(p.default_purchase_link) + '">Shopee</a>' : '<span class="muted">-</span>') + '</td>' +
-        '<td><button class="ghost" data-edit-part="' + esc(p.id) + '">Edit</button> <button class="secondary" data-print-part="' + esc(p.id) + '">Print Label</button></td>' +
+        '<td data-label="Barcode"><div class="barcode-box">' + code39Svg(p.sparepart_code, 190, 70) + '</div><br><small>' + esc(p.sparepart_code) + '</small></td>' +
+        '<td data-label="Nama"><b>' + esc(p.name) + '</b><br><small>' + esc(p.unit) + '</small></td>' +
+        '<td data-label="Stok"><span class="tag ' + stockCls + '">' + esc(p.stock) + '</span><br><small>Min: ' + esc(p.minimum_stock) + '</small></td>' +
+        '<td data-label="Lokasi">' + esc(p.room || "-") + '<br><small>' + esc(p.rack || "-") + '</small></td>' +
+        '<td data-label="Link">' + (p.default_purchase_link ? '<a target="_blank" href="' + esc(p.default_purchase_link) + '">Shopee</a>' : '<span class="muted">-</span>') + '</td>' +
+        '<td data-label="Aksi"><button class="ghost" data-edit-part="' + esc(p.id) + '">Edit</button> <button class="secondary" data-print-part="' + esc(p.id) + '">Print Label</button></td>' +
         '</tr>';
     });
     html += '</tbody></table>';
@@ -2449,9 +2529,9 @@
   function renderMotors() {
     var q = ($("motorSearch").value || "").toLowerCase();
     var rows = state.motors.filter(function (m) { return (m.motor_code + " " + m.plate_number + " " + m.type + " " + m.color + " " + m.outlet).toLowerCase().indexOf(q) >= 0; });
-    var html = '<table><thead><tr><th>No Motor</th><th>Plat</th><th>Tipe</th><th>Warna</th><th>Outlet</th><th>Status</th><th>Aksi</th></tr></thead><tbody>';
+    var html = '<table class="master-table"><thead><tr><th>No Motor</th><th>Plat</th><th>Tipe</th><th>Warna</th><th>Outlet</th><th>Status</th><th>Aksi</th></tr></thead><tbody>';
     rows.forEach(function (m) {
-      html += '<tr><td><b>' + esc(m.motor_code) + '</b></td><td>' + esc(m.plate_number || "-") + '</td><td>' + esc(m.type || "-") + '</td><td>' + esc(m.color || "-") + '</td><td>' + esc(m.outlet || "-") + '</td><td><span class="tag gray">' + esc(m.status || "-") + '</span></td><td><button class="ghost" data-edit-motor="' + esc(m.id) + '">Edit</button></td></tr>';
+      html += '<tr><td data-label="No Motor"><b>' + esc(m.motor_code) + '</b></td><td data-label="Plat">' + esc(m.plate_number || "-") + '</td><td data-label="Tipe">' + esc(m.type || "-") + '</td><td data-label="Warna">' + esc(m.color || "-") + '</td><td data-label="Outlet">' + esc(m.outlet || "-") + '</td><td data-label="Status"><span class="tag gray">' + esc(m.status || "-") + '</span></td><td data-label="Aksi"><button class="ghost" data-edit-motor="' + esc(m.id) + '">Edit</button></td></tr>';
     });
     html += '</tbody></table>';
     $("motorList").innerHTML = rows.length ? html : '<div class="muted">Belum ada motor.</div>';
@@ -2602,14 +2682,14 @@
     var r = state.part_requests.find(function (x) { return x.id === m.request_id; });
     if (action === "verify") {
       m.status = "verified";
-      m.verified_by = currentDemoUser();
+      m.verified_by = currentUserName();
       m.verified_at = todayIso();
       if (r) {
         var motor = state.motors.find(function (mt) { return mt.id === r.motor_id; });
         if (motor) motor.status = "maintenance";
         r.status = "stock_out_generated";
         r.stock_out_code = m.movement_code;
-        r.admin_stock_out_by = currentDemoUser();
+        r.admin_stock_out_by = currentUserName();
         r.admin_stock_out_at = todayIso();
         r.admin_note = "Ambil mandiri sudah diverifikasi admin.";
       }
@@ -2619,7 +2699,7 @@
       var reason = prompt("Alasan ditolak:", "Barang yang diambil tidak sesuai / bukti kurang jelas.");
       if (reason === null) return;
       m.status = "rejected";
-      m.verified_by = currentDemoUser();
+      m.verified_by = currentUserName();
       m.verified_at = todayIso();
       m.notes = (m.notes || "") + " | Ditolak: " + reason;
       var part = state.spareparts.find(function (p) { return p.id === m.sparepart_id; });
@@ -2630,7 +2710,7 @@
         r.admin_note = "Ambil mandiri ditolak: " + reason;
         r.stock_out_code = "";
       }
-      alert("Ambil mandiri ditolak dan stok dikembalikan di demo.");
+      alert("Ambil mandiri ditolak dan stok dikembalikan oleh sistem.");
     }
     save();
     renderAll();
@@ -2886,7 +2966,7 @@
     reader.onload = function (ev) {
       try {
         if (ext === "xlsx" || ext === "xls") {
-          if (!window.XLSX) return alert("Library XLSX belum termuat. Pakai CSV atau pastikan koneksi internet aktif saat demo.");
+          if (!window.XLSX) return alert("Library XLSX belum termuat. Pakai CSV atau pastikan koneksi internet aktif.");
           var wb = window.XLSX.read(ev.target.result, { type: "array" });
           var wanted = type === "motor" ? "Master Motor" : "Master Sparepart";
           var first = wb.SheetNames.indexOf(wanted) >= 0 ? wanted : wb.SheetNames[0];
@@ -2904,6 +2984,225 @@
     else reader.readAsText(file);
   }
 
+
+  async function loadUserAccessRows() {
+    userAccessRows = [];
+    if (!supabaseClient || currentRole() !== "owner") return;
+    try {
+      var allowed = await supabaseClient.from("allowed_users").select("*").order("created_at", { ascending: false });
+      if (allowed.error) throw allowed.error;
+      userAccessRows = allowed.data || [];
+    } catch (err) {
+      console.warn("Gagal load allowed_users", err);
+      userAccessRows = [];
+    }
+  }
+
+  function clearUserAccessForm() {
+    if ($("userAccessEditEmail")) $("userAccessEditEmail").value = "";
+    if ($("userAccessName")) $("userAccessName").value = "";
+    if ($("userAccessEmail")) { $("userAccessEmail").value = ""; $("userAccessEmail").disabled = false; }
+    if ($("userAccessRole")) $("userAccessRole").value = "mekanik";
+  }
+
+  function normalizeEmail(email) {
+    return String(email || "").trim().toLowerCase();
+  }
+
+  async function saveUserAccess(e) {
+    e.preventDefault();
+    if (!supabaseClient || currentRole() !== "owner") return alert("Hanya Owner yang bisa mengelola user.");
+    var email = normalizeEmail($("userAccessEmail").value);
+    var fullName = String($("userAccessName").value || "").trim();
+    var role = $("userAccessRole").value;
+    if (!email || !fullName || ["owner", "admin", "mekanik"].indexOf(role) < 0) return alert("Nama, email, dan role wajib valid.");
+    var payload = { email: email, full_name: fullName, role: role, active: true, updated_at: todayIso() };
+    var res = await supabaseClient.from("allowed_users").upsert(payload, { onConflict: "email" }).select("*").single();
+    if (res.error) return alert("Gagal menyimpan user: " + res.error.message);
+    await activateExistingProfile(email, fullName, role, true);
+    clearUserAccessForm();
+    await loadUserAccessRows();
+    renderUserAccess();
+    alert("User terdaftar. User bisa login dengan Gmail/email yang sama: " + email);
+  }
+
+  async function activateExistingProfile(email, fullName, role, active) {
+    try {
+      var existing = await supabaseClient.from("profiles").select("id,email").ilike("email", email).maybeSingle();
+      if (!existing.error && existing.data) {
+        await supabaseClient.from("profiles").update({ full_name: fullName, role: role, active: !!active, email: email, updated_at: todayIso() }).eq("id", existing.data.id);
+      }
+    } catch (err) {
+      console.warn("Sinkron profile existing gagal", err);
+    }
+  }
+
+  function renderUserAccess() {
+    var wrap = $("userAccessList");
+    if (!wrap) return;
+    if (currentRole() !== "owner") { wrap.innerHTML = '<div class="empty">Menu ini hanya untuk Owner.</div>'; return; }
+    var q = normalizeEmail($("userAccessSearch") ? $("userAccessSearch").value : "");
+    var rows = (userAccessRows || []).filter(function (u) {
+      var hay = [u.email, u.full_name, u.role, u.active ? "aktif" : "nonaktif"].join(" ").toLowerCase();
+      return !q || hay.indexOf(q) >= 0;
+    });
+    if (!rows.length) { wrap.innerHTML = '<div class="empty">Belum ada user terdaftar. Tambahkan Gmail/email user di form kiri.</div>'; return; }
+    wrap.innerHTML = rows.map(function (u) {
+      var active = u.active !== false;
+      return '<div class="user-access-card">' +
+        '<div><strong>' + esc(u.full_name || "-") + '</strong><div class="card-sub">' + esc(u.email || "-") + '</div></div>' +
+        '<div class="user-role-stack"><span class="tag ' + (active ? 'green' : 'red') + '">' + (active ? 'Aktif' : 'Nonaktif') + '</span><span class="tag gray">' + esc(String(u.role || "-").toUpperCase()) + '</span></div>' +
+        '<div class="row-actions"><button type="button" class="ghost" data-edit-user="' + esc(u.email) + '">Edit</button><button type="button" class="secondary" data-toggle-user="' + esc(u.email) + '">' + (active ? 'Nonaktifkan' : 'Aktifkan') + '</button><button type="button" class="danger" data-delete-user="' + esc(u.email) + '">Hapus</button></div>' +
+      '</div>';
+    }).join("");
+  }
+
+  function editUserAccess(email) {
+    var u = (userAccessRows || []).find(function (row) { return normalizeEmail(row.email) === normalizeEmail(email); });
+    if (!u) return;
+    $("userAccessEditEmail").value = u.email || "";
+    $("userAccessName").value = u.full_name || "";
+    $("userAccessEmail").value = u.email || "";
+    $("userAccessEmail").disabled = true;
+    $("userAccessRole").value = u.role || "mekanik";
+    $("userAccessName").focus();
+  }
+
+  async function toggleUserAccess(email) {
+    if (!supabaseClient || currentRole() !== "owner") return;
+    var u = (userAccessRows || []).find(function (row) { return normalizeEmail(row.email) === normalizeEmail(email); });
+    if (!u) return;
+    var next = !(u.active !== false);
+    var res = await supabaseClient.from("allowed_users").update({ active: next, updated_at: todayIso() }).eq("email", normalizeEmail(email));
+    if (res.error) return alert("Gagal update akses: " + res.error.message);
+    await activateExistingProfile(normalizeEmail(email), u.full_name || email, u.role || "mekanik", next);
+    await loadUserAccessRows();
+    renderUserAccess();
+  }
+
+  async function deleteUserAccess(email) {
+    if (!supabaseClient || currentRole() !== "owner") return;
+    if (!confirm("Hapus akses email ini? User tidak akan bisa masuk sistem lagi.")) return;
+    var u = (userAccessRows || []).find(function (row) { return normalizeEmail(row.email) === normalizeEmail(email); });
+    var res = await supabaseClient.from("allowed_users").delete().eq("email", normalizeEmail(email));
+    if (res.error) return alert("Gagal hapus akses: " + res.error.message);
+    if (u) await activateExistingProfile(normalizeEmail(email), u.full_name || email, u.role || "viewer", false);
+    await loadUserAccessRows();
+    renderUserAccess();
+  }
+
+
+  function showAuth(message, type) {
+    var auth = $("authScreen");
+    var app = $("appShell");
+    if (auth) auth.style.display = "grid";
+    if (app) app.classList.add("auth-hidden");
+    if (message) showAuthAlert(message, type || "info");
+  }
+  function showAppShell() {
+    var auth = $("authScreen");
+    var app = $("appShell");
+    if (auth) auth.style.display = "none";
+    if (app) app.classList.remove("auth-hidden");
+  }
+  function showAuthAlert(message, type) {
+    var el = $("authAlert");
+    if (!el) return;
+    el.textContent = message || "";
+    el.className = "auth-alert " + (type || "info");
+  }
+  function isSupabaseConfigured() {
+    return !!(cfg.useSupabase && cfg.supabaseUrl && cfg.supabaseAnonKey && cfg.supabaseUrl.indexOf("PROJECT_ID") < 0 && cfg.supabaseAnonKey.indexOf("ISI_") < 0 && window.supabase);
+  }
+  function bindAuthEvents() {
+    if (hasBoundAuthEvents) return;
+    hasBoundAuthEvents = true;
+    if ($("loginForm")) $("loginForm").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      if (!supabaseClient) return showAuthAlert("Supabase belum dikonfigurasi.", "error");
+      var email = $("loginEmail").value.trim();
+      var password = $("loginPassword").value;
+      showAuthAlert("Login diproses...", "info");
+      var res = await supabaseClient.auth.signInWithPassword({ email: email, password: password });
+      if (res.error) return showAuthAlert(res.error.message, "error");
+      location.reload();
+    });
+    if ($("forgotPasswordBtn")) $("forgotPasswordBtn").addEventListener("click", async function () {
+      if (!supabaseClient) return showAuthAlert("Supabase belum dikonfigurasi.", "error");
+      var email = $("loginEmail").value.trim();
+      if (!email) return showAuthAlert("Isi email dulu untuk reset password.", "error");
+      var res = await supabaseClient.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+      if (res.error) return showAuthAlert(res.error.message, "error");
+      showAuthAlert("Link reset password dikirim jika email terdaftar.", "ok");
+    });
+    if ($("googleLoginBtn")) $("googleLoginBtn").addEventListener("click", async function () {
+      if (!supabaseClient) return showAuthAlert("Supabase belum dikonfigurasi.", "error");
+      var res = await supabaseClient.auth.signInWithOAuth({ provider: "google", options: { redirectTo: location.origin + location.pathname } });
+      if (res.error) showAuthAlert(res.error.message, "error");
+    });
+  }
+  async function initAuth() {
+    bindAuthEvents();
+    if (!cfg.useSupabase) {
+      if (!cfg.allowLocalFallback) {
+        showAuth("Production mode but useSupabase=false. Isi config.js dengan Supabase URL dan anon key.", "error");
+        return false;
+      }
+      currentProfile = { full_name: "Admin Local", role: "admin", active: true };
+      showAppShell();
+      updateAccountUi();
+      return true;
+    }
+    if (!isSupabaseConfigured()) {
+      showAuth("Supabase belum siap. Edit config.js: supabaseUrl dan supabaseAnonKey harus diisi, lalu deploy ulang.", "error");
+      return false;
+    }
+    supabaseClient = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+    var sessionRes = await supabaseClient.auth.getSession();
+    currentSession = sessionRes.data && sessionRes.data.session;
+    if (!currentSession) {
+      showAuth("Silakan login. Email/Gmail harus sudah didaftarkan oleh Owner.", "info");
+      return false;
+    }
+    await loadCurrentProfile();
+    if (!currentProfile || !currentProfile.active || currentProfile.role === "viewer") {
+      showAuth("Email ini belum didaftarkan Owner atau aksesnya sedang nonaktif. Hubungi Owner agar Gmail/email didaftarkan di User Management.", "error");
+      return false;
+    }
+    showAppShell();
+    updateAccountUi();
+    return true;
+  }
+  async function loadCurrentProfile() {
+    var user = currentSession.user;
+    var res = await supabaseClient.from("profiles").select("*").eq("id", user.id).maybeSingle();
+    if (res.error) throw res.error;
+    if (!res.data) {
+      var fallbackName = (user.user_metadata && (user.user_metadata.full_name || user.user_metadata.name)) || (user.email || "User").split("@")[0];
+      var insert = await supabaseClient.from("profiles").insert({ id: user.id, full_name: fallbackName, email: user.email || "", role: "viewer", active: false }).select("*").single();
+      if (insert.error) throw insert.error;
+      currentProfile = insert.data;
+    } else {
+      currentProfile = res.data;
+    }
+  }
+  function updateAccountUi() {
+    var name = currentUserName();
+    if ($("accountName")) $("accountName").textContent = name;
+    if ($("accountEmail")) $("accountEmail").textContent = currentUserEmail();
+    if ($("accountRole")) $("accountRole").textContent = (currentRole() || "-").toUpperCase();
+    if ($("storageMode")) $("storageMode").textContent = cfg.useSupabase ? "Production Supabase" : "Local fallback";
+    if ($("roleSelect")) $("roleSelect").value = currentRole();
+    if ($("mechanicName") && currentRole() === "mekanik") $("mechanicName").value = name;
+    if ($("selfTakeMechanicName") && currentRole() === "mekanik") $("selfTakeMechanicName").value = name;
+  }
+  async function logout() {
+    if (supabaseClient) await supabaseClient.auth.signOut();
+    currentSession = null;
+    currentProfile = null;
+    location.reload();
+  }
+
   function openMobileMenu() { document.body.classList.add("sidebar-open"); }
   function closeMobileMenu() { document.body.classList.remove("sidebar-open"); }
 
@@ -2911,7 +3210,7 @@
     document.querySelectorAll(".nav button").forEach(function (btn) {
       btn.addEventListener("click", function () { setPage(btn.getAttribute("data-page")); });
     });
-    $("roleSelect").addEventListener("change", applyRoleView);
+    if ($("roleSelect")) $("roleSelect").addEventListener("change", applyRoleView);
     $("menuToggle").addEventListener("click", openMobileMenu);
     $("mobileBackdrop").addEventListener("click", closeMobileMenu);
     $("addRequestItemBtn").addEventListener("click", addRequestItemRow);
@@ -2934,6 +3233,9 @@
     if ($("monitorSearch")) $("monitorSearch").addEventListener("input", renderMotorMonitor);
     $("sparepartSearch").addEventListener("input", renderSpareparts);
     $("motorSearch").addEventListener("input", renderMotors);
+    if ($("userAccessForm")) $("userAccessForm").addEventListener("submit", saveUserAccess);
+    if ($("userAccessSearch")) $("userAccessSearch").addEventListener("input", renderUserAccess);
+    if ($("clearUserAccessForm")) $("clearUserAccessForm").addEventListener("click", clearUserAccessForm);
     document.querySelectorAll("[data-master-tab]").forEach(function (btn) {
       btn.addEventListener("click", function () { setMasterTab(btn.getAttribute("data-master-tab")); });
     });
@@ -2955,7 +3257,7 @@
     if ($("saveDemoGeminiKeyBtn")) $("saveDemoGeminiKeyBtn").addEventListener("click", saveDemoGeminiApiKey);
     if ($("demoGeminiApiKey")) $("demoGeminiApiKey").addEventListener("input", function () {
       var status = $("geminiDemoStatus");
-      if (status) status.textContent = "Klik Simpan untuk mengaktifkan key demo.";
+      if (status) status.textContent = "Mode production memakai backend Gemini.";
     });
     updateGeminiDemoStatus();
     if ($("checkoutProofForm")) $("checkoutProofForm").addEventListener("submit", function (e) { e.preventDefault(); submitOwnerApprovalWithProof(); });
@@ -2969,28 +3271,9 @@
     if ($("cancelReceiveBtn")) $("cancelReceiveBtn").addEventListener("click", function () { if ($("receiveDialog")) $("receiveDialog").close(); });
     if ($("closeMediaPreviewBtn")) $("closeMediaPreviewBtn").addEventListener("click", closeMediaPreview);
     if ($("closeMotorDetailBtn")) $("closeMotorDetailBtn").addEventListener("click", closeMotorDetail);
-    $("exportJsonBtn").addEventListener("click", exportJson);
-    $("resetDemoBtn").addEventListener("click", function () {
-      if (confirm("Reset semua data demo?")) {
-        localStorage.removeItem(STORAGE_KEY);
-        localStorage.removeItem("rental_motor_system_v12");
-        localStorage.removeItem("rental_motor_system_v11");
-        localStorage.removeItem("rental_motor_system_v10");
-        localStorage.removeItem("rental_motor_system_v9");
-        localStorage.removeItem("rental_motor_system_v8");
-        localStorage.removeItem("rental_motor_system_v7");
-        localStorage.removeItem("rental_motor_system_v6");
-        localStorage.removeItem("rental_motor_system_v4");
-        localStorage.removeItem("rental_motor_system_v3");
-        localStorage.removeItem("rental_motor_system_v2");
-        localStorage.removeItem("rental_motor_system_v1");
-        state = defaultData();
-        selectedMedia = [];
-        save();
-        renderSelectedMedia();
-        renderAll();
-      }
-    });
+    if ($("exportJsonBtn")) $("exportJsonBtn").addEventListener("click", exportJson);
+    if ($("manualSyncBtn")) $("manualSyncBtn").addEventListener("click", reloadCloudData);
+    if ($("logoutBtn")) $("logoutBtn").addEventListener("click", logout);
     document.body.addEventListener("click", function (e) {
       if (e.target.closest && e.target.closest(".media-open")) {
         e.preventDefault();
@@ -3017,24 +3300,38 @@
       if (printPart) printPartLabel(printPart);
       var editMotorId = e.target.getAttribute("data-edit-motor");
       if (editMotorId) editMotor(editMotorId);
+      var editUserEmail = e.target.getAttribute("data-edit-user");
+      if (editUserEmail) editUserAccess(editUserEmail);
+      var toggleUserEmail = e.target.getAttribute("data-toggle-user");
+      if (toggleUserEmail) toggleUserAccess(toggleUserEmail);
+      var deleteUserEmail = e.target.getAttribute("data-delete-user");
+      if (deleteUserEmail) deleteUserAccess(deleteUserEmail);
     });
     $("closeScanBtn").addEventListener("click", stopScan);
   }
 
-  function init() {
-    state = load();
-    var cfg = window.APP_CONFIG || {};
-    $("storageMode").textContent = cfg.useSupabase ? "Supabase configured" : "Demo localStorage";
-    bindEvents();
-    addRequestItemRow();
-    renderSelectedMedia();
-    renderSelfTakeMedia();
-    updateMotorLookup();
-    updateSelfTakePartLookup();
-    setMasterTab("sparepart");
-    setMechanicTab("request");
-    setMonitorTab("ready");
-    applyRoleView();
+  async function init() {
+    try {
+      var ok = await initAuth();
+      if (!ok) return;
+      if (cfg.useSupabase) state = await loadCloudState();
+      else state = loadLocal();
+      await loadUserAccessRows();
+      bindEvents();
+      addRequestItemRow();
+      renderSelectedMedia();
+      renderSelfTakeMedia();
+      updateMotorLookup();
+      updateSelfTakePartLookup();
+      setMasterTab("sparepart");
+      setMechanicTab("request");
+      setMonitorTab("ready");
+      updateAccountUi();
+      applyRoleView();
+    } catch (err) {
+      console.error(err);
+      showAuth("Gagal memulai aplikasi: " + (err.message || err), "error");
+    }
   }
 
   init();

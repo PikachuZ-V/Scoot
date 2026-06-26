@@ -1,20 +1,27 @@
+// Production config. Isi nilai Supabase sebelum deploy.
 window.APP_CONFIG = {
+  production: true,
   useSupabase: true,
-  supabaseUrl: "https://PROJECT_ID.supabase.co",
-  supabaseAnonKey: "ISI_SUPABASE_ANON_OR_PUBLISHABLE_KEY",
+  allowLocalFallback: false,
 
+  // Wajib diisi dari Supabase Project Settings > API
+  supabaseUrl: "https://PROJECT_ID.supabase.co",
+  supabaseAnonKey: "ISI_SUPABASE_ANON_PUBLISHABLE_KEY",
+
+  // OCR checkout proof memakai Gemini via backend Cloudflare Pages Functions.
+  // Jangan isi Gemini API key di frontend production.
   ocrProvider: "gemini",
   geminiProxyEndpoint: "/api/gemini-checkout-ocr",
   geminiReceiveProxyEndpoint: "/api/gemini-receive-ocr",
   geminiModel: "gemini-2.5-flash",
   geminiApiKey: "",
-  geminiApiBase: "https://generativelanguage.googleapis.com/v1beta",
   allowBrowserGeminiInDemo: false,
 
+  // WhatsApp auto report production.
   whatsappWebhookEndpoint: "/api/whatsapp-report",
 
+  // Fallback OCR lama dimatikan di production.
   ocrEndpoint: "",
   enableBrowserOcr: false,
-  ocrLanguage: "ind+eng",
-  tesseractCdn: "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"
+  ocrLanguage: "ind+eng"
 };

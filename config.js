@@ -1,31 +1,27 @@
-// Copy file ini menjadi config.js lalu isi Supabase URL dan Anon Key.
-// Kalau dikosongkan, aplikasi berjalan sebagai demo mode pakai localStorage browser.
+// Production config. Isi nilai Supabase sebelum deploy.
 window.APP_CONFIG = {
-  useSupabase: false,
+  production: true,
+  useSupabase: true,
+  allowLocalFallback: false,
+
+  // Wajib diisi dari Supabase Project Settings > API
   supabaseUrl: "https://tkvpvmrcjkgzjabyuvyv.supabase.co",
-  supabaseAnonKey: "sb_secret_jk76VCjTaeKnrcwcDJX2hg_H65oQWLO",
+  supabaseAnonKey: "sb_publishable_d4NdH-SjhmvXf0ki64dTcA_LGVbfn6i",
 
-  // OCR checkout proof memakai Gemini.
-  // REKOMENDASI PRODUCTION:
-  // Simpan GEMINI_API_KEY di backend/serverless, jangan di frontend.
+  // OCR checkout proof memakai Gemini via backend Cloudflare Pages Functions.
+  // Jangan isi Gemini API key di frontend production.
   ocrProvider: "gemini",
-  geminiProxyEndpoint: "", // /api/gemini-checkout-ocr
-  geminiReceiveProxyEndpoint: "", // /api/gemini-receive-ocr
+  geminiProxyEndpoint: "/api/gemini-checkout-ocr",
+  geminiReceiveProxyEndpoint: "/api/gemini-receive-ocr",
   geminiModel: "gemini-2.5-flash",
-
-  // DEV ONLY: boleh isi untuk tes lokal, tetapi jangan dipakai production
-  // karena API key akan terlihat di browser.
   geminiApiKey: "",
-  geminiApiBase: "https://generativelanguage.googleapis.com/v1beta",
-  allowBrowserGeminiInDemo: true,
+  allowBrowserGeminiInDemo: false,
 
-  // WhatsApp auto report production. Isi endpoint backend/WA gateway di sini.
-  // Demo lokal akan menyimpan pesan ke log tanpa benar-benar mengirim ke grup.
-  whatsappWebhookEndpoint: "",
+  // WhatsApp auto report production.
+  whatsappWebhookEndpoint: "/api/whatsapp-report",
 
-  // Fallback lama bila Gemini belum aktif.
+  // Fallback OCR lama dimatikan di production.
   ocrEndpoint: "",
   enableBrowserOcr: false,
-  ocrLanguage: "ind+eng",
-  tesseractCdn: "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"
+  ocrLanguage: "ind+eng"
 };

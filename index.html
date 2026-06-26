@@ -5,14 +5,41 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Rental Motor Maintenance & Inventory</title>
   <link rel="stylesheet" href="styles.css" />
-  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script defer src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="config.js"></script>
 </head>
 <body>
+  <section class="auth-screen" id="authScreen">
+    <div class="auth-card">
+      <div class="brand auth-brand">
+        <div class="brand-mark">RM</div>
+        <div>
+          <strong>Rental Motor</strong>
+          <span>Maintenance System</span>
+        </div>
+      </div>
+      <h1>Login Production</h1>
+      <p class="muted">Akses sistem hanya untuk email yang sudah didaftarkan Owner. User tidak bisa membuat akun sendiri.</p>
+      <div class="auth-alert" id="authAlert">Cek konfigurasi Supabase...</div>
+      <form id="loginForm" class="auth-form">
+        <label>Email</label>
+        <input id="loginEmail" type="email" autocomplete="email" placeholder="nama@email.com" required />
+        <label>Password</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Password" required />
+        <button type="submit" class="primary">Login</button>
+      </form>
+      <div class="auth-row">
+        <button type="button" class="ghost" id="forgotPasswordBtn">Reset Password Akun Terdaftar</button>
+      </div>
+      <button type="button" class="google-btn" id="googleLoginBtn">Login dengan Gmail Terdaftar</button>
+      <small class="muted">Gmail/email harus dibuat atau didaftarkan oleh Owner di menu User Management. Email di luar daftar tidak bisa masuk sistem.</small>
+    </div>
+  </section>
+
   <div class="mobile-backdrop" id="mobileBackdrop"></div>
-  <div class="app-shell">
+  <div class="app-shell auth-hidden" id="appShell">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
         <div class="brand-mark">RM</div>
@@ -22,14 +49,19 @@
         </div>
       </div>
 
-      <div class="role-card">
-        <label>Mode User</label>
-        <select id="roleSelect">
+      <div class="role-card account-card">
+        <label>Akun Login</label>
+        <strong id="accountName">-</strong>
+        <small id="accountEmail">-</small>
+        <span class="role-pill" id="accountRole">-</span>
+        <small id="storageMode">Production Supabase</small>
+        <button type="button" class="logout-btn" id="logoutBtn">Logout</button>
+        <select id="roleSelect" hidden aria-hidden="true">
           <option value="admin">Admin</option>
           <option value="owner">Owner</option>
           <option value="mekanik">Mekanik</option>
+          <option value="viewer">Viewer</option>
         </select>
-        <small id="storageMode">Demo mode</small>
       </div>
 
       <nav class="nav" id="nav">
@@ -46,6 +78,7 @@
         <button data-page="owner">Approval Owner</button>
         <button data-page="overview">Overview Keseluruhan</button>
         <button data-page="reports">Laporan</button>
+        <button data-page="users">User Management</button>
       </nav>
     </aside>
 
@@ -59,8 +92,9 @@
           </div>
         </div>
         <div class="top-actions">
+          <span class="sync-pill" id="syncStatus">Menunggu sinkronisasi</span>
+          <button class="ghost" id="manualSyncBtn">Refresh Data</button>
           <button class="ghost" id="exportJsonBtn">Export Backup</button>
-          <button class="danger" id="resetDemoBtn">Reset Demo</button>
         </div>
       </header>
 
@@ -85,7 +119,7 @@
           <div class="panel-head">
             <div>
               <h2>WhatsApp Auto Report</h2>
-              <p class="muted mini-desc">Demo log pengiriman otomatis ke grup laporan untuk request barang dan motor ready. Production memakai backend/webhook WhatsApp.</p>
+              <p class="muted mini-desc">Log pengiriman otomatis ke grup laporan untuk request barang dan motor ready. Pengiriman asli memakai backend/webhook WhatsApp.</p>
             </div>
             <span class="tag green" id="waAutoStatus">Auto ON</span>
           </div>
@@ -125,7 +159,7 @@
           <form id="mechanicForm" class="panel form-panel mechanic-form-only">
             <h2>Report Kerusakan Motor</h2>
             <label>Nama Mekanik</label>
-            <input id="mechanicName" placeholder="Contoh: Budi / Danda / Vanda" value="Mekanik Demo" required />
+            <input id="mechanicName" placeholder="Contoh: Budi / Danda / Vanda" value="" required />
 
             <label>No Motor</label>
             <div class="inline-field">
@@ -171,7 +205,7 @@
             </div>
 
             <label>Nama Mekanik</label>
-            <input id="selfTakeMechanicName" placeholder="Contoh: Budi / Danda / Vanda" value="Mekanik Demo" required />
+            <input id="selfTakeMechanicName" placeholder="Contoh: Budi / Danda / Vanda" value="" required />
 
             <label>No Motor</label>
             <div class="inline-field">
@@ -280,7 +314,7 @@
         <div class="split-grid warehouse-grid">
           <div class="panel form-panel">
             <h2>Review Mekanik Ambil Sendiri</h2>
-            <p class="muted mini-desc">Cocokkan barang yang diambil dengan bukti foto/video. Jika ditolak, stok akan dikembalikan di demo.</p>
+            <p class="muted mini-desc">Cocokkan barang yang diambil dengan bukti foto/video. Jika ditolak, stok dikoreksi kembali oleh sistem.</p>
             <div id="selfTakeReviewList" class="card-list"></div>
           </div>
 
@@ -429,6 +463,47 @@
           <div id="reportSummary" class="report-grid"></div>
         </div>
       </section>
+
+      <section id="users" class="page">
+        <div class="split-grid user-management-grid">
+          <form id="userAccessForm" class="panel form-panel">
+            <h2>Daftarkan User</h2>
+            <p class="muted mini-desc">Hanya Owner yang bisa menambahkan email. User tidak bisa sign up sendiri. Setelah email didaftarkan, user bisa login memakai Gmail dengan email yang sama.</p>
+            <input type="hidden" id="userAccessEditEmail" />
+
+            <label>Nama User</label>
+            <input id="userAccessName" placeholder="Contoh: Mekanik Budi" required />
+
+            <label>Email Gmail / Email Login</label>
+            <input id="userAccessEmail" type="email" placeholder="nama@gmail.com" required />
+
+            <label>Role</label>
+            <select id="userAccessRole">
+              <option value="mekanik">Mekanik</option>
+              <option value="admin">Admin</option>
+              <option value="owner">Owner</option>
+            </select>
+
+            <div class="lookup-box muted">
+              Gmail harus sama persis dengan email yang didaftarkan di sini. Jika email belum terdaftar, login Google akan ditolak oleh sistem.
+            </div>
+
+            <button type="submit" class="primary">Simpan / Daftarkan Email</button>
+            <button type="button" class="ghost" id="clearUserAccessForm">Bersihkan Form</button>
+          </form>
+
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Daftar User Terdaftar</h2>
+                <p class="muted mini-desc">Kelola akses Gmail/email dan role. Nonaktifkan user untuk memblokir akses.</p>
+              </div>
+              <input id="userAccessSearch" placeholder="Cari nama/email/role..." />
+            </div>
+            <div id="userAccessList" class="user-access-list"></div>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -455,13 +530,9 @@
           <div id="checkoutProofPreview" class="media-list"></div>
 
           <div class="lookup-box gemini-demo-box">
-            <b>Gemini OCR Demo</b>
-            <div class="hint">Untuk tes lokal/demo tanpa backend, isi Gemini API Key di sini. Untuk production, API key tetap wajib disimpan di backend/serverless.</div>
-            <div class="inline-field">
-              <input id="demoGeminiApiKey" type="password" placeholder="Paste Gemini API Key untuk demo lokal" autocomplete="off" />
-              <button type="button" class="ghost" id="saveDemoGeminiKeyBtn">Simpan</button>
-            </div>
-            <div class="card-sub" id="geminiDemoStatus">Gemini demo key belum disimpan.</div>
+            <b>Gemini OCR Production</b>
+            <div class="hint">OCR berjalan melalui backend/serverless <code>/api/gemini-checkout-ocr</code>. API key Gemini disimpan di Cloudflare Environment, bukan di browser.</div>
+            <div class="card-sub" id="geminiDemoStatus">Mode production: backend Gemini aktif jika environment sudah diisi.</div>
           </div>
 
           <button type="button" class="secondary full-lite" id="runOcrBtn">Gemini OCR & Isi Kolom</button>

@@ -1,44 +1,28 @@
-# Checklist Production v14
+# Production Checklist v16
 
-## Sebelum Deploy
-- [ ] Supabase project sudah dibuat
-- [ ] `sql/schema.sql` sudah dijalankan
-- [ ] `sql/seed.sql` sudah dijalankan
-- [ ] User Owner/Admin/Mekanik sudah dibuat di Supabase Auth
-- [ ] Tabel `profiles` sudah terisi role user
-- [ ] `config.js` sudah diisi Supabase URL + anon key
-- [ ] `geminiApiKey` di `config.js` dikosongkan
-- [ ] Cloudflare Pages project sudah dibuat
-- [ ] Environment/secret Cloudflare sudah diisi
-- [ ] Google Drive root folder sudah dibuat
-- [ ] WhatsApp gateway sudah dipilih
+## Supabase
+- [ ] `sql/schema.sql` sudah dijalankan.
+- [ ] `sql/production_auth_and_state.sql` sudah dijalankan.
+- [ ] Email Owner pertama sudah dimasukkan ke `allowed_users`.
+- [ ] Google provider aktif di Supabase Auth.
+- [ ] Site URL dan Redirect URLs sudah diarahkan ke domain Cloudflare Pages.
+- [ ] `config.js` sudah diisi Supabase URL dan anon/publishable key.
 
-## Environment/Secret Cloudflare
-- [ ] GEMINI_API_KEY
-- [ ] GEMINI_MODEL
-- [ ] SUPABASE_SERVICE_ROLE_KEY
-- [ ] GOOGLE_DRIVE_ROOT_FOLDER_ID
-- [ ] GOOGLE_CLIENT_EMAIL / OAuth credential
-- [ ] GOOGLE_PRIVATE_KEY / OAuth secret
-- [ ] WA_API_TOKEN
-- [ ] WA_GROUP_ID
+## User Access
+- [ ] Owner bisa login memakai Gmail yang sudah dibootstrap.
+- [ ] Menu **User Management** muncul hanya untuk Owner.
+- [ ] Owner bisa menambahkan email mekanik.
+- [ ] Owner bisa menambahkan email admin.
+- [ ] Email yang belum didaftarkan tidak bisa masuk sistem.
+- [ ] Role menu otomatis sesuai role: Owner/Admin/Mekanik.
 
-## Test Go-Live
-- [ ] Login Owner berhasil
-- [ ] Login Admin berhasil
-- [ ] Login Mekanik berhasil
-- [ ] Mekanik submit request + upload foto/video
-- [ ] Preview foto/video bisa dibuka di web
-- [ ] Admin review request
-- [ ] Gemini OCR checkout proof berhasil
-- [ ] Owner approve/revisi/reject berhasil
-- [ ] Admin upload bukti barang tiba + OCR nomor pesanan
-- [ ] Stock masuk update
-- [ ] Stock keluar generate sekali saja, tidak dobel
-- [ ] Mekanik mulai service
-- [ ] Mekanik selesai service + upload foto ready
-- [ ] WhatsApp auto-report request terkirim/logged
-- [ ] WhatsApp auto-report motor ready terkirim/logged
-- [ ] Monitor Motor ready/maintenance/ongoing tampil benar
-- [ ] Laporan Owner tampil benar
-- [ ] Mobile responsive sudah dicek
+## Cloudflare
+- [ ] Deploy lewat GitHub integration, bukan Direct Upload jika memakai folder `functions/`.
+- [ ] Environment variable Gemini sudah diisi.
+- [ ] WhatsApp/Google Drive backend dikonfigurasi jika sudah siap.
+
+## Mobile Responsive
+- [ ] Login screen nyaman di HP.
+- [ ] Master Data & Barcode tidak melebar di HP.
+- [ ] User Management tidak melebar di HP.
+- [ ] Detail card/dropdown admin dan owner tidak melebar.
