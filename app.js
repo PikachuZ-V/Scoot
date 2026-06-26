@@ -276,13 +276,39 @@
     if (!supabaseClient || !currentSession || !state) return;
     try {
       var payload = {
-        id: "main",
         data: state,
         updated_at: new Date().toISOString(),
         updated_by: currentSession.user.id
       };
-      var res = await supabaseClient.from("app_state").upsert(payload, { onConflict: "id" });
+
+      // Production fix V19:
+      // Simpan app_state memakai UPDATE untuk row singleton `main`.
+      // Sebelumnya memakai UPSERT sehingga Supabase/PostgREST tetap mengecek INSERT policy.
+      // Akibatnya mekanik bisa terkena error: new row violates row-level security policy for table "app_state".
+      var res = await supabaseClient
+        .from("app_state")
+        .update(payload)
+        .eq("id", "main")
+        .select("id")
+        .maybeSingle();
+
       if (res.error) throw res.error;
+
+      if (!res.data) {
+        var insertPayload = {
+          id: "main",
+          data: state,
+          updated_at: new Date().toISOString(),
+          updated_by: currentSession.user.id
+        };
+        var insertRes = await supabaseClient
+          .from("app_state")
+          .insert(insertPayload)
+          .select("id")
+          .single();
+        if (insertRes.error) throw insertRes.error;
+      }
+
       setSyncStatus("Tersimpan di Supabase", "ok");
     } catch (err) {
       console.error(err);
