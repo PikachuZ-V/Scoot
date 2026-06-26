@@ -25,6 +25,7 @@
   var titles = {
     dashboard: ["Dashboard", "Ringkasan request, stok, dan pekerjaan motor sesuai role user."],
     monitor: ["Monitor Motor", "Pantau motor ready, maintenance, dan ongoing maintenance."],
+    motor_transfer: ["Pengiriman / Retur Motor", "Admin mencatat pengiriman motor ready dan retur motor maintenance antar lokasi."],
     mechanic_request: ["Request Mekanik", "Input kerusakan motor, upload foto/video, dan request sparepart."],
     mechanic_status: ["Status Request", "Pantau request aktif milik mekanik yang sedang login."],
     mechanic_ongoing: ["Ongoing Maintenance", "Motor yang sedang dalam proses service setelah stock keluar."],
@@ -59,8 +60,8 @@
   };
 
   var rolePages = {
-    admin: ["dashboard", "monitor", "admin", "warehouse", "spareparts"],
-    owner: ["dashboard", "monitor", "owner", "overview", "reports", "users"],
+    admin: ["dashboard", "monitor", "motor_transfer", "admin", "warehouse", "spareparts"],
+    owner: ["dashboard", "monitor", "motor_transfer", "owner", "overview", "reports", "users"],
     mekanik: ["dashboard", "monitor", "mechanic_request", "mechanic_status", "mechanic_ongoing", "mechanic_done", "mechanic_history"]
   };
 
@@ -149,7 +150,8 @@
       owner_approvals: [],
       stock_movements: [],
       whatsapp_logs: [],
-      whatsapp_settings: { enabled: true, group_name: "Group Laporan Maintenance" }
+      whatsapp_settings: { enabled: true, group_name: "Group Laporan Maintenance" },
+      motor_transfers: []
     };
   }
 
@@ -164,6 +166,12 @@
     data.stock_movements = data.stock_movements || [];
     data.whatsapp_logs = data.whatsapp_logs || [];
     data.whatsapp_settings = data.whatsapp_settings || { enabled: true, group_name: "Group Laporan Maintenance" };
+    data.motor_transfers = data.motor_transfers || [];
+    data.motor_transfers.forEach(function (t) {
+      t.items = t.items || [];
+      t.created_at = t.created_at || t.transfer_date || todayIso();
+      t.transfer_code = t.transfer_code || seq("TRF", data.motor_transfers, "transfer_code");
+    });
     data.owner_approvals.forEach(function (a) {
       a.marketplace = a.marketplace || "";
       a.checkout_screenshot = a.checkout_screenshot || null;
@@ -383,6 +391,7 @@
     if (!state) return;
     renderDashboard();
     renderMotorMonitor();
+    renderMotorTransfers();
     renderWhatsAppLogs();
     renderAdmin();
     renderOwner();
@@ -477,6 +486,8 @@
     var active = activeRequestsForMotor(motor.id);
     if (active.some(function (r) { return r.status === "ongoing_maintenance"; })) return "ongoing_maintenance";
     if (active.length) return "maintenance";
+    if (["maintenance", "return_maintenance", "retur_maintenance"].indexOf(motor.status) >= 0) return "maintenance";
+    if (motor.status === "ongoing_maintenance") return "ongoing_maintenance";
     return "ready";
   }
 
@@ -525,7 +536,7 @@
         '<div class="motor-status-top"><div><div class="motor-code">Motor ' + esc(motor.motor_code || '-') + '</div><div class="card-sub">' + esc(motor.type || '-') + ' · ' + esc(motor.color || '-') + ' · ' + esc(motor.outlet || '-') + '</div></div>' +
         '<span class="tag ' + motorStatusClass(st) + '">' + esc(motorStatusText(st)) + '</span></div>' +
         '<div class="motor-info-grid"><span>Plat</span><b>' + esc(motor.plate_number || '-') + '</b><span>' + (st === 'ready' ? 'Tanggal ready' : 'Dari') + '</span><b>' + esc(st === 'ready' ? readyDate : fromDate) + '</b><span>Kerusakan</span><b>' + esc(report.damage_notes || '-') + '</b><span>Kebutuhan</span><b>' + esc(requestNeedSummary(useReq)) + '</b></div>' +
-        '<div class="card-actions"><button class="secondary" data-motor-detail="' + esc(motor.id) + '">Lihat Detail Motor</button></div>' +
+        '<div class="card-actions"><button class="secondary" data-motor-detail="' + esc(motor.id) + '">Lihat Detail Motor</button>' + (currentRole() === 'admin' && st === 'ready' ? '<button class="ghost danger-lite" data-quick-return-motor="' + esc(motor.id) + '">Retur Maintenance</button>' : '') + '</div>' +
         '</div>';
     }).join('') : '<div class="muted">Tidak ada motor untuk status ini.</div>';
   }
@@ -547,6 +558,7 @@
     var activeRows = activeRequestsForMotor(motor.id).slice().sort(function (a,b) { return String(b.created_at||'').localeCompare(String(a.created_at||'')); });
     var doneRows = state.part_requests.filter(function (r) { return r.motor_id === motor.id && r.status === 'completed'; }).sort(function (a,b) { return String(b.completed_at||b.created_at||'').localeCompare(String(a.completed_at||a.created_at||'')); });
     var latest = st === 'ready' ? (doneRows[0] || latestRequestForMotor(motor.id)) : (activeRows[0] || latestRequestForMotor(motor.id));
+    var transferRows = getTransferItemsForMotor(motor.id);
     var report = latest ? (state.damage_reports.find(function (d) { return d.id === latest.report_id; }) || {}) : {};
     if ($('motorDetailTitle')) $('motorDetailTitle').textContent = 'Detail Motor ' + (motor.motor_code || '-');
     var activeHtml = activeRows.length ? activeRows.map(function (r) { return requestCardHtml(r, true, false); }).join('') : '<div class="muted">Tidak ada maintenance aktif.</div>';
@@ -559,13 +571,148 @@
       '<div class="detail-box"><span>Tanggal ready terakhir</span><b>' + esc(doneRows[0] ? (doneRows[0].maintenance_done_date || formatDateTime(doneRows[0].completed_at)) : '-') + '</b></div>' +
       '</div>' +
       '<h3>Maintenance Aktif</h3><div class="card-list">' + activeHtml + '</div>' +
-      '<h3>History Ready / Service Selesai</h3><div class="card-list">' + doneHtml + '</div>';
+      '<h3>History Ready / Service Selesai</h3><div class="card-list">' + doneHtml + '</div>' +
+      '<h3>History Pengiriman / Retur</h3><div class="card-list">' + (transferRows.length ? transferRows.map(transferItemCardHtml).join('') : '<div class="muted">Belum ada pengiriman/retur untuk motor ini.</div>') + '</div>'; 
     if ($('motorDetailBody')) $('motorDetailBody').innerHTML = body;
     if ($('motorDetailDialog')) $('motorDetailDialog').showModal();
   }
 
   function closeMotorDetail() {
     if ($('motorDetailDialog')) $('motorDetailDialog').close();
+  }
+
+
+  function parseMotorCodes(text) {
+    return String(text || '')
+      .split(/[\n,;]+/)
+      .map(function (x) { return x.trim(); })
+      .filter(Boolean);
+  }
+  function findMotorByCode(code) {
+    var key = String(code || '').trim().toLowerCase();
+    return state.motors.find(function (m) { return String(m.motor_code || '').toLowerCase() === key || String(m.barcode_value || '').toLowerCase() === key; }) || null;
+  }
+  function latestServiceDateForMotor(motorId) {
+    var done = latestCompletedRequestForMotor(motorId);
+    if (done) return done.maintenance_done_date || (done.completed_at ? String(done.completed_at).slice(0,10) : '');
+    var items = getTransferItemsForMotor(motorId).filter(function (x) { return x.item.direction === 'return_maintenance' && x.item.last_service_date; });
+    return items[0] ? items[0].item.last_service_date : '';
+  }
+  function getTransferItemsForMotor(motorId) {
+    var rows = [];
+    (state.motor_transfers || []).forEach(function (t) {
+      (t.items || []).forEach(function (it) {
+        if (it.motor_id === motorId) rows.push({ transfer: t, item: it });
+      });
+    });
+    rows.sort(function (a,b) { return String(b.transfer.transfer_date || b.transfer.created_at || '').localeCompare(String(a.transfer.transfer_date || a.transfer.created_at || '')); });
+    return rows;
+  }
+  function transferItemCardHtml(row) {
+    var t = row.transfer || {};
+    var it = row.item || {};
+    var motor = state.motors.find(function (m) { return m.id === it.motor_id; }) || {};
+    var dirLabel = it.direction === 'send_ready' ? 'Dikirim Ready' : 'Retur Maintenance';
+    var tagCls = it.direction === 'send_ready' ? 'green' : 'red';
+    return '<div class="mini-transfer-card"><div><b>Motor ' + esc(motor.motor_code || it.motor_code || '-') + '</b> <span class="tag ' + tagCls + '">' + esc(dirLabel) + '</span></div>' +
+      '<div class="card-sub">' + esc(t.transfer_code || '-') + ' · ' + esc(t.transfer_date || '-') + ' · ' + esc(it.from_location || t.from_location || '-') + ' → ' + esc(it.to_location || t.to_location || '-') + '</div>' +
+      '<div class="card-sub">Service terakhir: <b>' + esc(it.last_service_date || latestServiceDateForMotor(it.motor_id) || '-') + '</b></div>' +
+      (it.note ? '<div class="muted">' + esc(it.note) + '</div>' : '') + '</div>';
+  }
+  function renderMotorTransfers() {
+    if (!$('transferList')) return;
+    var role = currentRole();
+    var form = $('motorTransferForm');
+    if (form) form.style.display = role === 'admin' ? 'block' : 'none';
+    if ($('transferAdminName') && !$('transferAdminName').value) $('transferAdminName').value = currentUserName();
+    if ($('transferDate') && !$('transferDate').value) $('transferDate').value = todayDashed();
+    var q = ($('transferSearch') && $('transferSearch').value || '').toLowerCase();
+    var transfers = (state.motor_transfers || []).slice().sort(function (a,b) { return String(b.created_at || b.transfer_date || '').localeCompare(String(a.created_at || a.transfer_date || '')); });
+    var totalSent = 0, totalReturned = 0;
+    transfers.forEach(function (t) { (t.items || []).forEach(function (it) { if (it.direction === 'send_ready') totalSent++; else totalReturned++; }); });
+    if ($('transferSummary')) $('transferSummary').innerHTML =
+      '<div class="status-section"><div class="status-count">' + transfers.length + '</div><h3>Total Dokumen</h3><div class="muted">Pengiriman/retur tercatat</div></div>' +
+      '<div class="status-section"><div class="status-count">' + totalSent + '</div><h3>Motor Ready Dikirim</h3><div class="muted">Dari HQ ke outlet</div></div>' +
+      '<div class="status-section"><div class="status-count">' + totalReturned + '</div><h3>Motor Retur Maintenance</h3><div class="muted">Dari outlet ke HQ</div></div>';
+    var filtered = transfers.filter(function (t) {
+      var hay = [t.transfer_code, t.transfer_date, t.from_location, t.to_location, t.admin_name, t.note].join(' ');
+      (t.items || []).forEach(function (it) { var m = state.motors.find(function (x) { return x.id === it.motor_id; }) || {}; hay += ' ' + [it.motor_code, m.motor_code, m.plate_number, it.direction, it.note].join(' '); });
+      return hay.toLowerCase().indexOf(q) >= 0;
+    });
+    $('transferList').innerHTML = filtered.length ? filtered.map(function (t) {
+      var sent = (t.items || []).filter(function (it) { return it.direction === 'send_ready'; });
+      var ret = (t.items || []).filter(function (it) { return it.direction === 'return_maintenance'; });
+      return '<div class="card transfer-card"><div class="card-head"><div><div class="card-title">' + esc(t.transfer_code || '-') + '</div><div class="card-sub">' + esc(t.transfer_date || '-') + ' · ' + esc(t.from_location || '-') + ' → ' + esc(t.to_location || '-') + ' · Admin: ' + esc(t.admin_name || '-') + '</div></div><span class="tag gray">' + sent.length + ' kirim · ' + ret.length + ' retur</span></div>' +
+        '<details class="detail-dropdown"><summary><span><b>Motor Ready Dikirim</b><small>' + sent.length + ' motor</small></span><span class="chevron">⌄</span></summary><div class="detail-dropdown-body">' + (sent.length ? sent.map(function (it) { return transferItemCardHtml({ transfer: t, item: it }); }).join('') : '<div class="muted">Tidak ada motor ready dikirim.</div>') + '</div></details>' +
+        '<details class="detail-dropdown"><summary><span><b>Motor Retur Maintenance</b><small>' + ret.length + ' motor</small></span><span class="chevron">⌄</span></summary><div class="detail-dropdown-body">' + (ret.length ? ret.map(function (it) { return transferItemCardHtml({ transfer: t, item: it }); }).join('') : '<div class="muted">Tidak ada motor retur.</div>') + '</div></details>' +
+        (t.note ? '<div class="card-sub"><b>Catatan:</b> ' + esc(t.note) + '</div>' : '') + '</div>';
+    }).join('') : '<div class="muted">Belum ada data pengiriman/retur motor.</div>';
+  }
+  function createMotorTransfer(e) {
+    e.preventDefault();
+    var transferDate = $('transferDate').value || todayDashed();
+    var from = $('transferFrom').value.trim() || 'HQ';
+    var to = $('transferTo').value.trim() || 'Canggu';
+    var adminName = $('transferAdminName').value.trim() || currentUserName();
+    var note = $('transferNote').value.trim();
+    var lastService = $('transferLastServiceDate').value || '';
+    var sendCodes = parseMotorCodes($('transferSendCodes').value);
+    var returnCodes = parseMotorCodes($('transferReturnCodes').value);
+    if (!sendCodes.length && !returnCodes.length) return alert('Isi minimal 1 motor ready dikirim atau 1 motor retur maintenance.');
+    var missing = [];
+    var items = [];
+    sendCodes.forEach(function (code) {
+      var motor = findMotorByCode(code);
+      if (!motor) { missing.push(code); return; }
+      motor.outlet = to;
+      motor.status = 'ready';
+      motor.last_dispatch_date = transferDate;
+      motor.last_dispatch_to = to;
+      items.push({ id: uid('trfi'), direction: 'send_ready', motor_id: motor.id, motor_code: motor.motor_code, from_location: from, to_location: to, last_service_date: latestServiceDateForMotor(motor.id), note: 'Motor ready dikirim ke ' + to });
+    });
+    returnCodes.forEach(function (code) {
+      var motor = findMotorByCode(code);
+      if (!motor) { missing.push(code); return; }
+      motor.outlet = to;
+      motor.status = 'maintenance';
+      motor.return_from_location = from;
+      motor.return_to_location = to;
+      motor.return_date = transferDate;
+      motor.return_note = note || 'Retur dari outlet untuk maintenance.';
+      motor.last_service_date = lastService || motor.last_service_date || latestServiceDateForMotor(motor.id);
+      items.push({ id: uid('trfi'), direction: 'return_maintenance', motor_id: motor.id, motor_code: motor.motor_code, from_location: from, to_location: to, last_service_date: motor.last_service_date || '', note: note || 'Retur dari outlet untuk maintenance.' });
+    });
+    if (!items.length) return alert('Tidak ada nomor motor yang cocok. Cek ulang input.');
+    var transfer = { id: uid('trf'), transfer_code: seq('TRF', state.motor_transfers || [], 'transfer_code'), transfer_date: transferDate, from_location: from, to_location: to, admin_name: adminName, note: note, items: items, created_at: todayIso(), created_by: currentUserName() };
+    state.motor_transfers.unshift(transfer);
+    save();
+    renderAll();
+    $('transferSendCodes').value = '';
+    $('transferReturnCodes').value = '';
+    $('transferNote').value = '';
+    if (missing.length) alert('Tersimpan, tapi nomor ini tidak ditemukan: ' + missing.join(', '));
+    else alert('Pengiriman/retur motor tersimpan.');
+  }
+  function quickReturnMotor(motorId) {
+    var motor = state.motors.find(function (m) { return m.id === motorId; });
+    if (!motor) return;
+    var from = motor.outlet || 'Outlet';
+    var to = prompt('Motor retur ke lokasi mana?', 'HQ');
+    if (!to) return;
+    var note = prompt('Keterangan returan / alasan maintenance:', 'Retur dari ' + from + ' untuk maintenance.');
+    var lastService = prompt('Tanggal service terakhir (opsional, format YYYY-MM-DD):', motor.last_service_date || latestServiceDateForMotor(motor.id) || '');
+    motor.status = 'maintenance';
+    motor.outlet = to;
+    motor.return_from_location = from;
+    motor.return_to_location = to;
+    motor.return_date = todayDashed();
+    motor.return_note = note || '';
+    motor.last_service_date = lastService || motor.last_service_date || '';
+    var transfer = { id: uid('trf'), transfer_code: seq('TRF', state.motor_transfers || [], 'transfer_code'), transfer_date: todayDashed(), from_location: from, to_location: to, admin_name: currentUserName(), note: note || 'Retur cepat dari monitor motor.', items: [{ id: uid('trfi'), direction: 'return_maintenance', motor_id: motor.id, motor_code: motor.motor_code, from_location: from, to_location: to, last_service_date: motor.last_service_date || '', note: note || '' }], created_at: todayIso(), created_by: currentUserName() };
+    state.motor_transfers.unshift(transfer);
+    save();
+    renderAll();
+    alert('Motor ' + motor.motor_code + ' sudah diubah ke Maintenance dan retur tercatat.');
   }
 
   function composeWhatsAppMessage(eventType, r) {
@@ -3231,6 +3378,8 @@
     $("ownerSearch").addEventListener("input", renderOwner);
     if ($("overviewSearch")) $("overviewSearch").addEventListener("input", renderOwnerOverview);
     if ($("monitorSearch")) $("monitorSearch").addEventListener("input", renderMotorMonitor);
+    if ($("motorTransferForm")) $("motorTransferForm").addEventListener("submit", createMotorTransfer);
+    if ($("transferSearch")) $("transferSearch").addEventListener("input", renderMotorTransfers);
     $("sparepartSearch").addEventListener("input", renderSpareparts);
     $("motorSearch").addEventListener("input", renderMotors);
     if ($("userAccessForm")) $("userAccessForm").addEventListener("submit", saveUserAccess);
@@ -3294,6 +3443,8 @@
       if (motorDetailId) openMotorDetail(motorDetailId);
       var copyWaId = e.target.getAttribute("data-copy-wa");
       if (copyWaId) copyWhatsAppLog(copyWaId);
+      var quickReturnId = e.target.getAttribute("data-quick-return-motor");
+      if (quickReturnId) quickReturnMotor(quickReturnId);
       var editPart = e.target.getAttribute("data-edit-part");
       if (editPart) editSparepart(editPart);
       var printPart = e.target.getAttribute("data-print-part");

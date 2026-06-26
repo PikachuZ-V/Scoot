@@ -67,6 +67,7 @@
       <nav class="nav" id="nav">
         <button data-page="dashboard" class="active">Dashboard</button>
         <button data-page="monitor">Monitor Motor</button>
+        <button data-page="motor_transfer">Pengiriman / Retur Motor</button>
         <button data-page="mechanic_request">Request Mekanik</button>
         <button data-page="mechanic_status">Status Request</button>
         <button data-page="mechanic_ongoing">Ongoing Maintenance</button>
@@ -146,6 +147,60 @@
 
           <div id="motorMonitorSummary" class="status-section-grid monitor-summary"></div>
           <div id="motorMonitorList" class="monitor-grid"></div>
+        </div>
+      </section>
+
+      <section id="motor_transfer" class="page">
+        <div class="transfer-layout">
+          <form id="motorTransferForm" class="panel form-panel admin-only-panel">
+            <h2>Buat Pengiriman / Retur Motor</h2>
+            <p class="muted mini-desc">Admin mencatat pengiriman motor ready dari HQ ke outlet dan retur motor maintenance dari outlet ke HQ. Owner hanya bisa memantau.</p>
+
+            <label>Tanggal Kirim / Terima Retur</label>
+            <input id="transferDate" type="date" required />
+
+            <div class="grid-2 compact-grid">
+              <div>
+                <label>Dari Lokasi</label>
+                <input id="transferFrom" value="HQ" placeholder="Contoh: HQ" required />
+              </div>
+              <div>
+                <label>Ke Lokasi</label>
+                <input id="transferTo" value="Canggu" placeholder="Contoh: Canggu" required />
+              </div>
+            </div>
+
+            <label>Admin Pengirim / Penerima</label>
+            <input id="transferAdminName" placeholder="Nama admin" />
+
+            <label>Motor Ready Dikirim dari HQ ke Outlet</label>
+            <textarea id="transferSendCodes" rows="3" placeholder="Isi no motor dipisah koma. Contoh: 079, 123, 145, 160"></textarea>
+            <div class="hint">Motor yang dikirim akan tetap status Ready dan lokasi/outlet-nya berubah ke tujuan.</div>
+
+            <label>Motor Retur dari Outlet ke HQ untuk Maintenance</label>
+            <textarea id="transferReturnCodes" rows="3" placeholder="Isi no motor dipisah koma. Contoh: 088, 109, 141, 147"></textarea>
+            <div class="hint">Motor retur akan berubah status ke Maintenance dan lokasi/outlet-nya berubah ke tujuan retur.</div>
+
+            <label>Tanggal Service Terakhir Motor Retur</label>
+            <input id="transferLastServiceDate" type="date" />
+
+            <label>Keterangan Retur / Pengiriman</label>
+            <textarea id="transferNote" rows="4" placeholder="Contoh: Canggu return 4 motor karena rem kurang pakem, ban habis, dan kelistrikan perlu dicek. HQ kirim 4 motor ready pengganti."></textarea>
+
+            <button type="submit" class="primary">Simpan Pengiriman / Retur</button>
+          </form>
+
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Monitoring Pengiriman & Retur</h2>
+                <p class="muted mini-desc">Riwayat pengiriman motor ready dan retur motor maintenance. Owner hanya read-only.</p>
+              </div>
+              <input id="transferSearch" placeholder="Cari kode motor / lokasi / catatan..." />
+            </div>
+            <div id="transferSummary" class="status-section-grid"></div>
+            <div id="transferList" class="card-list"></div>
+          </div>
         </div>
       </section>
 

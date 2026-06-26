@@ -1115,3 +1115,34 @@ dialog {
     width: 100%;
   }
 }
+
+/* V17 - Pengiriman / Retur Motor */
+.transfer-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 460px) 1fr;
+  gap: 18px;
+  align-items: start;
+}
+.compact-grid { gap: 10px; }
+.transfer-card .detail-dropdown { margin-top: 10px; }
+.mini-transfer-card {
+  border: 1px solid var(--border, #dde4ee);
+  border-radius: 14px;
+  padding: 12px;
+  background: #fff;
+  margin: 8px 0;
+}
+.danger-lite {
+  background: #fee2e2 !important;
+  color: #991b1b !important;
+}
+@media (max-width: 980px) {
+  .transfer-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .transfer-layout .panel { padding: 14px; }
+  .compact-grid { grid-template-columns: 1fr !important; }
+  .transfer-card .card-head { gap: 10px; }
+  .transfer-card .card-head > div:first-child { min-width: 0; }
+  .mini-transfer-card { padding: 10px; }
+}
