@@ -137,7 +137,16 @@
               <h2>Monitor Status Motor</h2>
               <p class="muted mini-desc">Pantau motor ready, maintenance, dan ongoing maintenance. Semua role bisa melihat, hanya admin yang mengubah data master/status lewat flow approval.</p>
             </div>
-            <input id="monitorSearch" placeholder="Cari no motor / plat / tipe / kerusakan..." />
+            <div class="monitor-toolbar">
+              <input id="monitorSearch" placeholder="Cari no motor / plat / tipe / kerusakan..." />
+              <label class="inline-select-label">Tampil
+                <select id="monitorPageSize">
+                  <option value="5">5</option>
+                  <option value="10" selected>10</option>
+                </select>
+                data/page
+              </label>
+            </div>
           </div>
 
           <div class="section-tabs monitor-tabs" role="tablist" aria-label="Monitor Motor">
@@ -164,7 +173,7 @@
               <div class="section-title-row">
                 <div>
                   <h3>Kirim Motor Ready</h3>
-                  <p class="muted mini-desc">Hanya motor status Ready di lokasi asal yang akan muncul.</p>
+                  <p class="muted mini-desc">Hanya motor status Ready di lokasi asal yang akan muncul. Maksimal 4 motor sekali kirim.</p>
                 </div>
                 <span class="tag green">Ready</span>
               </div>
@@ -178,7 +187,8 @@
                   <select id="transferSendTo" required></select>
                 </div>
               </div>
-              <label>Pilih Motor Ready yang Dikirim</label>
+              <label>Pilih Motor Ready yang Dikirim <span class="mini-desc muted">(maks. 4 motor)</span></label>
+              <input id="transferSendSearch" class="transfer-search-input" placeholder="Cari no motor / plat / tipe ready di lokasi asal..." />
               <select id="transferSendMotors" multiple size="6" class="large-multi-select"></select>
               <div class="hint">Setelah disimpan, motor tetap Ready dan lokasi/outlet berubah ke tujuan. Request lama tidak akan membuat status berubah Maintenance lagi jika pengiriman ready adalah status terakhir.</div>
               <div id="transferSendBreakdown" class="selected-motor-breakdown"></div>
@@ -188,7 +198,7 @@
               <div class="section-title-row">
                 <div>
                   <h3>Retur Motor ke HQ untuk Maintenance</h3>
-                  <p class="muted mini-desc">Pilih motor dari lokasi outlet yang dikembalikan ke HQ.</p>
+                  <p class="muted mini-desc">Pilih motor dari lokasi outlet yang dikembalikan ke HQ. Maksimal 4 motor sekali retur.</p>
                 </div>
                 <span class="tag red">Retur</span>
               </div>
@@ -202,7 +212,8 @@
                   <select id="transferReturnTo" required></select>
                 </div>
               </div>
-              <label>Pilih Motor Retur</label>
+              <label>Pilih Motor Retur <span class="mini-desc muted">(maks. 4 motor)</span></label>
+              <input id="transferReturnSearch" class="transfer-search-input" placeholder="Cari no motor / plat / tipe yang diretur..." />
               <select id="transferReturnMotors" multiple size="6" class="large-multi-select"></select>
               <div class="hint">Setelah disimpan, motor berubah menjadi Maintenance dan lokasi/outlet berubah ke tujuan retur.</div>
               <div id="transferReturnBreakdown" class="selected-motor-breakdown"></div>
@@ -542,6 +553,7 @@
       <section id="reports" class="page">
         <div class="panel">
           <h2>Laporan Owner</h2>
+          <p class="muted mini-desc">Laporan dibuat compact. Detail panjang seperti stok menipis, fast moving, dan pembelian terakhir dibuka lewat dropdown agar tidak memanjang ke bawah.</p>
           <div id="reportSummary" class="report-grid"></div>
         </div>
       </section>

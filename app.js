@@ -156,6 +156,18 @@
     renderAll();
   }
 
+  function getPageSize(key, fallback) {
+    fallback = fallback || PAGE_SIZE;
+    var el = $(key + "PageSize");
+    var n = el ? Number(el.value || fallback) : fallback;
+    if (!isFinite(n) || n <= 0) n = fallback;
+    return Math.min(n, 10);
+  }
+  function pageSizeSelectHtml(id, current) {
+    current = Number(current || 10);
+    return '<label class="inline-select-label">Tampil <select id="' + esc(id) + '"><option value="5"' + (current === 5 ? ' selected' : '') + '>5</option><option value="10"' + (current === 10 ? ' selected' : '') + '>10</option></select> data/page</label>';
+  }
+
   function findSparepartByName(name) {
     var key = normalizeKey(name);
     if (!key) return null;
@@ -672,6 +684,12 @@
     return items.length ? items.map(function (item) { return item.sparepart_name + " x" + item.qty_requested; }).join(", ") : "Tidak ada sparepart.";
   }
 
+  function monitorPaginationBlock(key, rows, renderFn) {
+    var size = getPageSize('monitor', 10);
+    var pager = paginateRows(key, rows, size);
+    return (pager.rows.length ? pager.rows.map(renderFn).join('') : '<div class="muted empty-card">Tidak ada data pada section ini.</div>') + paginationHtml(key, pager);
+  }
+
   function renderMotorMonitor() {
     if (!$('motorMonitorList')) return;
     var q = ($('monitorSearch') && $('monitorSearch').value || '').toLowerCase();
@@ -714,13 +732,13 @@
       var readyCanggu = rows.filter(function (m) { return normalizeLocationName(m.outlet || m.current_location || m.location) === 'Canggu'; });
       var readyOther = rows.filter(function (m) { var loc = normalizeLocationName(m.outlet || m.current_location || m.location); return loc !== 'HQ' && loc !== 'Canggu'; });
       $('motorMonitorList').innerHTML =
-        '<div class="monitor-location-block"><div class="section-title-row"><h3>Ready di HQ</h3><span class="tag green">' + readyHQ.length + ' motor</span></div><div class="monitor-grid inner-grid">' + (readyHQ.length ? readyHQ.map(motorCard).join('') : '<div class="muted empty-card">Tidak ada motor ready di HQ.</div>') + '</div></div>' +
-        '<div class="monitor-location-block"><div class="section-title-row"><h3>Ready di Canggu</h3><span class="tag green">' + readyCanggu.length + ' motor</span></div><div class="monitor-grid inner-grid">' + (readyCanggu.length ? readyCanggu.map(motorCard).join('') : '<div class="muted empty-card">Tidak ada motor ready di Canggu.</div>') + '</div></div>' +
-        (readyOther.length ? '<div class="monitor-location-block"><div class="section-title-row"><h3>Ready Lokasi Lain</h3><span class="tag gray">' + readyOther.length + ' motor</span></div><div class="monitor-grid inner-grid">' + readyOther.map(motorCard).join('') + '</div></div>' : '');
+        '<details class="monitor-location-block compact-details" open><summary><span><b>Ready di HQ</b><small>' + readyHQ.length + ' motor</small></span><span class="chevron">⌄</span></summary><div class="monitor-grid inner-grid">' + monitorPaginationBlock('monitor_ready_hq', readyHQ, motorCard) + '</div></details>' +
+        '<details class="monitor-location-block compact-details" open><summary><span><b>Ready di Canggu</b><small>' + readyCanggu.length + ' motor</small></span><span class="chevron">⌄</span></summary><div class="monitor-grid inner-grid">' + monitorPaginationBlock('monitor_ready_canggu', readyCanggu, motorCard) + '</div></details>' +
+        (readyOther.length ? '<details class="monitor-location-block compact-details"><summary><span><b>Ready Lokasi Lain</b><small>' + readyOther.length + ' motor</small></span><span class="chevron">⌄</span></summary><div class="monitor-grid inner-grid">' + monitorPaginationBlock('monitor_ready_other', readyOther, motorCard) + '</div></details>' : '');
       return;
     }
 
-    $('motorMonitorList').innerHTML = rows.length ? rows.map(motorCard).join('') : '<div class="muted">Tidak ada motor untuk status ini.</div>';
+    $('motorMonitorList').innerHTML = rows.length ? monitorPaginationBlock('monitor_' + activeMonitorTab, rows, motorCard) : '<div class="muted">Tidak ada motor untuk status ini.</div>';
   }
 
   function setMonitorTab(tab) {
@@ -862,14 +880,35 @@
     return 'Motor ' + (motor.motor_code || '-') + ' · ' + (motor.type || '-') + ' · ' + (motor.plate_number || '-') + ' · ' + loc + ' · ' + st + ' · service: ' + svc;
   }
 
+  function filterMotorRowsForSearch(rows, query) {
+    var q = normalizeKey(query || '');
+    if (!q) return rows || [];
+    var terms = q.split(' ').filter(Boolean);
+    return (rows || []).filter(function (m) {
+      var hay = normalizeKey([m.motor_code, m.plate_number, m.type, m.color, m.outlet, m.current_location, m.location, latestServiceDateForMotor(m.id)].join(' '));
+      return terms.every(function (t) { return hay.indexOf(t) >= 0; });
+    });
+  }
+
   function populateMotorMultiSelect(id, rows, oldSelected) {
     var el = $(id);
     if (!el) return;
-    oldSelected = oldSelected || selectedValues(id);
+    oldSelected = (oldSelected || selectedValues(id)).slice(0, 4);
     el.innerHTML = rows.map(function (m) { return '<option value="' + esc(m.id) + '">' + esc(motorOptionLabel(m)) + '</option>'; }).join('');
     Array.prototype.slice.call(el.options || []).forEach(function (opt) {
       opt.selected = oldSelected.indexOf(opt.value) >= 0;
     });
+  }
+
+  function enforceMaxMotorSelection(id, max) {
+    max = max || 4;
+    var el = $(id);
+    if (!el) return;
+    var selected = selectedValues(id);
+    if (selected.length <= max) return;
+    var keep = selected.slice(0, max);
+    Array.prototype.slice.call(el.options || []).forEach(function (opt) { opt.selected = keep.indexOf(opt.value) >= 0; });
+    alert('Maksimal ' + max + ' motor dalam satu pengiriman/retur.');
   }
 
   function eligibleReadySendMotors(location) {
@@ -904,10 +943,17 @@
     fillLocationSelect('transferReturnFrom', 'Canggu');
     fillLocationSelect('transferReturnTo', 'HQ');
 
+    enforceMaxMotorSelection('transferSendMotors', 4);
+    enforceMaxMotorSelection('transferReturnMotors', 4);
+
     var sendFrom = $('transferSendFrom') ? $('transferSendFrom').value : 'HQ';
     var returnFrom = $('transferReturnFrom') ? $('transferReturnFrom').value : 'Canggu';
-    populateMotorMultiSelect('transferSendMotors', eligibleReadySendMotors(sendFrom));
-    populateMotorMultiSelect('transferReturnMotors', eligibleReturnMotors(returnFrom));
+    var sendSearch = $('transferSendSearch') ? $('transferSendSearch').value : '';
+    var returnSearch = $('transferReturnSearch') ? $('transferReturnSearch').value : '';
+    var sendRows = filterMotorRowsForSearch(eligibleReadySendMotors(sendFrom), sendSearch).slice(0, 80);
+    var returnRows = filterMotorRowsForSearch(eligibleReturnMotors(returnFrom), returnSearch).slice(0, 80);
+    populateMotorMultiSelect('transferSendMotors', sendRows);
+    populateMotorMultiSelect('transferReturnMotors', returnRows);
 
     var sendIds = selectedValues('transferSendMotors');
     var returnIds = selectedValues('transferReturnMotors');
@@ -961,6 +1007,7 @@
     var note = $('transferNote').value.trim();
     var sendIds = selectedValues('transferSendMotors');
     var returnIds = selectedValues('transferReturnMotors');
+    if (sendIds.length > 4 || returnIds.length > 4) return alert('Maksimal 4 motor untuk kirim dan maksimal 4 motor untuk retur dalam satu transaksi.');
     if (!sendIds.length && !returnIds.length) return alert('Pilih minimal 1 motor ready dikirim atau 1 motor retur maintenance.');
     var missing = [];
     var invalid = [];
@@ -1098,11 +1145,23 @@
 
   function renderWhatsAppLogs() {
     if (!$('waLogList')) return;
-    var rows = (state.whatsapp_logs || []).slice(0, 5);
+    var all = (state.whatsapp_logs || []);
+    var rows = all.slice(0, 6);
+    var requestCount = all.filter(function (x) { return x.event_type === 'request_created'; }).length;
+    var readyCount = all.filter(function (x) { return x.event_type === 'motor_ready'; }).length;
+    var failedCount = all.filter(function (x) { return String(x.status || '').indexOf('failed') >= 0; }).length;
     if ($('waAutoStatus')) $('waAutoStatus').textContent = state.whatsapp_settings && state.whatsapp_settings.enabled === false ? 'Auto OFF' : 'Auto ON';
-    $('waLogList').innerHTML = rows.length ? rows.map(function (log) {
-      return '<div class="wa-log-card"><div class="wa-log-head"><b>' + esc(log.event_type === 'motor_ready' ? 'Motor Ready' : 'Request Barang') + '</b><span class="tag gray">' + esc(formatDateTime(log.created_at)) + '</span><span class="tag ' + (String(log.status).indexOf('failed') >= 0 ? 'red' : 'green') + '">' + esc(log.status) + '</span></div><pre>' + esc(log.message) + '</pre><div class="card-actions"><button class="ghost" data-copy-wa="' + esc(log.id) + '">Copy Pesan</button></div></div>';
+    var flowHtml = '<div class="wa-flow-grid">' +
+      '<div class="wa-flow-step"><b>1. Trigger</b><span>Mekanik submit request / motor ready</span></div>' +
+      '<div class="wa-flow-step"><b>2. Generate pesan</b><span>Sistem membuat format laporan WA otomatis</span></div>' +
+      '<div class="wa-flow-step"><b>3. Kirim / log</b><span>Production kirim via webhook, demo masuk log</span></div>' +
+      '</div>';
+    var summaryHtml = '<div class="wa-summary-row"><span class="tag green">Request: ' + requestCount + '</span><span class="tag green">Ready: ' + readyCount + '</span><span class="tag ' + (failedCount ? 'red' : 'gray') + '">Gagal: ' + failedCount + '</span></div>';
+    var logHtml = rows.length ? rows.map(function (log) {
+      var title = log.event_type === 'motor_ready' ? 'Motor Ready' : 'Request Barang';
+      return '<details class="wa-log-card compact-details"><summary><span><b>' + esc(title) + '</b><small>' + esc(formatDateTime(log.created_at)) + ' · ' + esc(log.status || '-') + '</small></span><span class="chevron">⌄</span></summary><pre>' + esc(log.message) + '</pre><div class="card-actions"><button class="ghost" data-copy-wa="' + esc(log.id) + '">Copy Pesan</button></div></details>';
     }).join('') : '<div class="muted">Belum ada auto report WhatsApp. Saat mekanik membuat request atau menyelesaikan motor, pesan akan masuk log ini.</div>';
+    $('waLogList').innerHTML = flowHtml + summaryHtml + '<div class="wa-log-stack">' + logHtml + '</div>';
   }
 
   function copyWhatsAppLog(id) {
@@ -1340,11 +1399,13 @@
 
   function renderDashboard() {
     var role = currentRole();
-    var newReq = state.part_requests.filter(function (r) { return r.status === "submitted_by_mechanic"; }).length;
-    var ownerReq = state.part_requests.filter(function (r) { return r.status === "waiting_owner_approval"; }).length;
-    var emptyStock = state.spareparts.filter(function (p) { return Number(p.stock) <= 0; }).length;
+    var myName = currentUserName();
+    var metricRows = state.part_requests.filter(function (r) { return role !== "mekanik" || r.mechanic_name === myName; });
+    var newReq = metricRows.filter(function (r) { return r.status === "submitted_by_mechanic"; }).length;
+    var ownerReq = metricRows.filter(function (r) { return r.status === "waiting_owner_approval"; }).length;
+    var emptyStock = role === "mekanik" ? metricRows.filter(function (r) { return getItemsForRequest(r.id).some(function (it) { return Number(it.stock_snapshot || 0) <= 0; }); }).length : state.spareparts.filter(function (p) { return Number(p.stock) <= 0; }).length;
     var today = new Date().toISOString().slice(0, 10);
-    var stockOutToday = state.stock_movements.filter(function (m) {
+    var stockOutToday = role === "mekanik" ? metricRows.filter(function (r) { return String(r.created_at || '').slice(0, 10) === today || String(r.updated_at || '').slice(0, 10) === today; }).length : state.stock_movements.filter(function (m) {
       return m.created_at && m.created_at.slice(0, 10) === today && (m.movement_type === "stock_out" || m.movement_type === "self_take_out");
     }).length;
     $("mRequestNew").textContent = newReq;
@@ -1394,7 +1455,7 @@
         var motor = state.motors.find(function (m) { return m.id === r.motor_id; }) || {};
         return '<div class="mini-row"><b>Motor ' + esc(motor.motor_code || "-") + '</b><span>' + esc(statusLabel[r.status] || r.status) + '</span></div>';
       }).join("") || '<div class="muted">Tidak ada data.</div>';
-      return '<div class="status-section"><div class="status-count">' + secRows.length + '</div><h3>' + esc(sec.title) + '</h3>' + preview + '</div>';
+      return '<details class="status-section dashboard-status-dropdown"><summary><span><b>' + esc(sec.title) + '</b><small>' + secRows.length + ' data</small></span><span class="status-count">' + secRows.length + '</span></summary><div class="dashboard-status-body">' + preview + '</div></details>';
     }).join("");
 
     var q = ($("dashboardSearch").value || "").toLowerCase();
@@ -1404,7 +1465,7 @@
       var report = state.damage_reports.find(function (d) { return d.id === r.report_id; }) || {};
       return (motor.motor_code + " " + items + " " + r.status + " " + report.damage_notes + " " + (r.mechanic_name || "")).toLowerCase().indexOf(q) >= 0;
     });
-    $("dashboardListTitle").textContent = role === "mekanik" ? "Status & History Service Saya" : "Request Per Motor";
+    $("dashboardListTitle").textContent = role === "mekanik" ? "Motor yang Saya Service" : "Request Per Motor";
     var pager = paginateRows('dashboard', rows, PAGE_SIZE);
     $("dashboardList").innerHTML = rows.length ? pager.rows.map(function (r) { return requestCardHtml(r, true); }).join("") + paginationHtml('dashboard', pager) : '<div class="muted">Belum ada data untuk dashboard role ini.</div>';
   }
@@ -3339,6 +3400,10 @@
     $('overviewList').innerHTML = rows.length ? pager.rows.map(function (r) { return requestCardHtml(r, true, true); }).join('') + paginationHtml('overview', pager) : '<div class="muted">Belum ada data overview.</div>';
   }
 
+  function reportMiniRows(rows, emptyText) {
+    return rows.length ? rows.map(function (html) { return html; }).join('') : '<div class="muted">' + esc(emptyText || 'Belum ada data.') + '</div>';
+  }
+
   function renderReports() {
     var totalMotor = state.motors.length;
     var readyMotor = state.motors.filter(function (m) { return computedMotorStatus(m) === "ready"; }).length;
@@ -3352,29 +3417,32 @@
     var purchaseCount = purchaseFrequency();
     var avgPurchase = purchaseCount ? Math.round(purchaseSpend / purchaseCount) : 0;
 
-    var topParts = fastMovingParts(10);
-    var topHtml = topParts.length ? topParts.map(function (p) { return '<div class="mini-row"><b>' + esc(p.name) + '</b><span>' + esc(p.qty) + ' keluar</span></div>'; }).join("") : '<span class="muted">Belum ada stock keluar.</span>';
-    var lowStock = state.spareparts.filter(function (p) { return Number(p.stock) <= Number(p.minimum_stock); }).map(function (p) { return '<div><span class="tag ' + (Number(p.stock) <= 0 ? 'red' : 'yellow') + '">' + esc(p.name) + ' · stok ' + esc(p.stock) + ' / min ' + esc(p.minimum_stock) + '</span></div>'; }).join("") || '<span class="muted">Tidak ada stok menipis.</span>';
-    var recentPurchases = state.owner_approvals.slice().reverse().filter(function (a) {
+    var topParts = fastMovingParts(20);
+    var topRows = topParts.map(function (p) { return '<div class="mini-row"><b>' + esc(p.name) + '</b><span>' + esc(p.qty) + ' keluar</span></div>'; });
+    var lowParts = state.spareparts.filter(function (p) { return Number(p.stock) <= Number(p.minimum_stock); });
+    var lowRows = lowParts.map(function (p) { return '<div class="mini-row"><b>' + esc(p.name) + '</b><span class="tag ' + (Number(p.stock) <= 0 ? 'red' : 'yellow') + '">stok ' + esc(p.stock) + ' / min ' + esc(p.minimum_stock) + '</span></div>'; });
+    var recentPurchasesRows = state.owner_approvals.slice().reverse().filter(function (a) {
       var r = state.part_requests.find(function (x) { return x.id === a.request_id; });
       return r && ["owner_approved", "purchase_pending", "received_by_warehouse", "stock_out_ready", "stock_out_generated", "ongoing_maintenance", "completed"].indexOf(r.status) >= 0;
-    }).slice(0, 5).map(function (a) {
+    }).slice(0, 15).map(function (a) {
       var r = state.part_requests.find(function (x) { return x.id === a.request_id; }) || {};
       var motor = state.motors.find(function (m) { return m.id === r.motor_id; }) || {};
       var b = a.checkout_breakdown || {};
       return '<div class="mini-row"><b>' + esc(a.approval_code || '-') + ' · Motor ' + esc(motor.motor_code || '-') + '</b><span>' + formatRupiah(b.total_before_checkout || a.total_estimated_amount || 0) + '</span></div>';
-    }).join("") || '<div class="muted">Belum ada pembelian approved.</div>';
+    });
+
+    function compactDetails(title, count, rows, emptyText) {
+      return '<details class="report-detail compact-details"><summary><span><b>' + esc(title) + '</b><small>' + count + ' data</small></span><span class="chevron">⌄</span></summary><div class="report-scroll-list">' + reportMiniRows(rows, emptyText) + '</div></details>';
+    }
 
     $("reportSummary").innerHTML =
       '<div class="report-card accent"><h3>Total Motor</h3><strong>' + totalMotor + '</strong><p>Ready ' + readyMotor + ' · Maintenance ' + maintenanceMotor + ' · Ongoing ' + ongoingMotor + '</p></div>' +
-      '<div class="report-card"><h3>Motor Ready</h3><strong>' + readyMotor + '</strong><p>Siap dipakai / sudah selesai service.</p></div>' +
-      '<div class="report-card"><h3>Motor Maintenance</h3><strong>' + maintenanceMotor + '</strong><p>Request barang, menunggu owner/barang, atau siap stock keluar.</p></div>' +
-      '<div class="report-card"><h3>Ongoing Maintenance</h3><strong>' + ongoingMotor + '</strong><p>Sedang dikerjakan mekanik.</p></div>' +
       '<div class="report-card accent"><h3>Total Pengeluaran Sparepart</h3><strong>' + formatRupiah(purchaseSpend) + '</strong><p>' + purchaseCount + 'x pembelian · rata-rata ' + formatRupiah(avgPurchase) + '</p></div>' +
-      '<div class="report-card"><h3>Total Request</h3><strong>' + totalRequest + '</strong><p>Baru ' + requestBaru + ' · Menunggu barang ' + menungguBarang + ' · Selesai ' + selesai + '</p></div>' +
-      '<div class="report-card"><h3>Fast Moving Stock</h3>' + topHtml + '</div>' +
-      '<div class="report-card"><h3>Stok Habis / Menipis</h3>' + lowStock + '</div>' +
-      '<div class="report-card wide-report"><h3>Pembelian Terakhir</h3>' + recentPurchases + '</div>';
+      '<div class="report-card"><h3>Status Motor</h3><div class="mini-row"><b>Ready</b><span>' + readyMotor + '</span></div><div class="mini-row"><b>Maintenance</b><span>' + maintenanceMotor + '</span></div><div class="mini-row"><b>Ongoing</b><span>' + ongoingMotor + '</span></div></div>' +
+      '<div class="report-card"><h3>Status Request</h3><div class="mini-row"><b>Total Request</b><span>' + totalRequest + '</span></div><div class="mini-row"><b>Request Baru</b><span>' + requestBaru + '</span></div><div class="mini-row"><b>Menunggu Barang</b><span>' + menungguBarang + '</span></div><div class="mini-row"><b>Selesai</b><span>' + selesai + '</span></div></div>' +
+      '<div class="report-card wide-report">' + compactDetails('Fast Moving Stock', topParts.length, topRows, 'Belum ada stock keluar.') + '</div>' +
+      '<div class="report-card wide-report">' + compactDetails('Stok Habis / Menipis', lowParts.length, lowRows, 'Tidak ada stok menipis.') + '</div>' +
+      '<div class="report-card wide-report">' + compactDetails('Pembelian Terakhir', recentPurchasesRows.length, recentPurchasesRows, 'Belum ada pembelian approved.') + '</div>';
   }
 
   function code39Svg(text, width, height) {
@@ -3874,9 +3942,10 @@
     if ($("movementSearch")) $("movementSearch").addEventListener("input", renderMovements);
     $("ownerSearch").addEventListener("input", renderOwner);
     if ($("overviewSearch")) $("overviewSearch").addEventListener("input", renderOwnerOverview);
-    if ($("monitorSearch")) $("monitorSearch").addEventListener("input", renderMotorMonitor);
+    if ($("monitorSearch")) $("monitorSearch").addEventListener("input", function(){ setPageKey("monitor_" + activeMonitorTab, 1); setPageKey("monitor_ready_hq", 1); setPageKey("monitor_ready_canggu", 1); setPageKey("monitor_ready_other", 1); renderMotorMonitor(); });
+    if ($("monitorPageSize")) $("monitorPageSize").addEventListener("change", function(){ pageState = {}; renderMotorMonitor(); });
     if ($("motorTransferForm")) $("motorTransferForm").addEventListener("submit", createMotorTransfer);
-    ["transferSendFrom", "transferSendTo", "transferReturnFrom", "transferReturnTo", "transferSendMotors", "transferReturnMotors"].forEach(function (id) {
+    ["transferSendFrom", "transferSendTo", "transferReturnFrom", "transferReturnTo", "transferSendMotors", "transferReturnMotors", "transferSendSearch", "transferReturnSearch"].forEach(function (id) {
       if ($(id)) $(id).addEventListener("change", refreshTransferFormOptions);
     });
     if ($("transferSearch")) $("transferSearch").addEventListener("input", renderMotorTransfers);
