@@ -1436,3 +1436,66 @@ dialog {
   .compact-details summary { padding: 12px; }
   .report-scroll-list { max-height: 240px; }
 }
+
+/* v24: detail/history fixes, overview filters, and media zoom */
+.overview-filter-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 260px);
+  gap: 10px;
+  width: 100%;
+}
+.overview-filter-card {
+  text-align: left;
+  background: #fff;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  min-height: 94px;
+}
+.overview-filter-card.active-filter {
+  outline: 2px solid #0f172a;
+  background: #f8fafc;
+}
+.zoom-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 8px;
+  background: rgba(15, 23, 42, .9);
+  color: #fff;
+}
+.zoom-toolbar button {
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-weight: 900;
+  background: #e5e7eb;
+  color: #0f172a;
+  cursor: pointer;
+}
+.zoom-pan {
+  width: 100%;
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  touch-action: pan-x pan-y;
+}
+.zoomable-media {
+  transform-origin: center center;
+  transition: transform .12s ease;
+}
+.media-preview-body img.zoomable-media {
+  max-width: 100%;
+  max-height: none;
+}
+@media (max-width: 760px) {
+  .overview-filter-row { grid-template-columns: 1fr; }
+  .zoom-toolbar { justify-content: flex-start; overflow-x: auto; }
+  .media-preview-body { max-height: 76vh; }
+  .zoom-pan { min-height: 180px; }
+}

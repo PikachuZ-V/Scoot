@@ -8,6 +8,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script defer src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
   <script src="config.js"></script>
 </head>
 <body>
@@ -277,7 +278,7 @@
 
             <label>Upload Foto / Video dari Galeri</label>
             <div class="hint">Saat production, file akan otomatis dikirim ke Google Drive berdasarkan nomor motor, tanggal report, dan kode report.</div>
-            <input id="mediaUpload" type="file" accept="image/*,video/*" multiple />
+            <input id="mediaUpload" type="file" accept="image/jpeg,image/jpg,image/png,image/heic,image/heif,.jpg,.jpeg,.png,.heic,.heif,video/*" multiple />
             <div id="mediaPreviewList" class="media-list"></div>
 
             <label>Link Tambahan Foto / Video</label>
@@ -321,7 +322,7 @@
 
             <label>Bukti Ambil Sparepart</label>
             <div class="hint">Upload foto/video barang yang diambil. Admin akan crosscheck di menu Gudang.</div>
-            <input id="selfTakeMediaUpload" type="file" accept="image/*,video/*" multiple />
+            <input id="selfTakeMediaUpload" type="file" accept="image/jpeg,image/jpg,image/png,image/heic,image/heif,.jpg,.jpeg,.png,.heic,.heif,video/*" multiple />
             <div id="selfTakeMediaPreviewList" class="media-list"></div>
 
             <label>Link Tambahan Bukti</label>
@@ -543,7 +544,15 @@
         <div class="panel">
           <div class="panel-head">
             <h2>Overview Keseluruhan</h2>
-            <input id="overviewSearch" placeholder="Cari motor / sparepart / status..." />
+            <div class="overview-filter-row"><input id="overviewSearch" placeholder="Cari motor / sparepart / status..." />
+              <select id="overviewStatusFilter" aria-label="Filter status overview">
+                <option value="all">Semua Status</option>
+                <option value="request_baru">Request Baru</option>
+                <option value="menunggu_barang">Menunggu Barang</option>
+                <option value="ongoing">Ongoing Maintenance</option>
+                <option value="completed">Sudah Service</option>
+                <option value="revision">Revisi / Ditolak / Batal</option>
+              </select></div>
           </div>
           <div id="overviewSummary" class="status-section-grid"></div>
           <div id="overviewList" class="card-list"></div>
@@ -620,7 +629,7 @@
           </select>
 
           <label>Upload SS Before Checkout</label>
-          <input id="checkoutProofFile" type="file" accept="image/*" />
+          <input id="checkoutProofFile" type="file" accept="image/jpeg,image/jpg,image/png,image/heic,image/heif,.jpg,.jpeg,.png,.heic,.heif" />
           <div id="checkoutProofPreview" class="media-list"></div>
 
           <div class="lookup-box gemini-demo-box">
@@ -686,11 +695,11 @@
       <div class="checkout-layout">
         <div>
           <label>Upload Foto Barang Diterima</label>
-          <input id="receiveGoodsFile" type="file" accept="image/*,video/*" multiple />
+          <input id="receiveGoodsFile" type="file" accept="image/jpeg,image/jpg,image/png,image/heic,image/heif,.jpg,.jpeg,.png,.heic,.heif,video/*" multiple />
           <div id="receiveGoodsPreview" class="media-list"></div>
 
           <label>Upload SS Halaman Pesanan Marketplace</label>
-          <input id="receiveOrderFile" type="file" accept="image/*" />
+          <input id="receiveOrderFile" type="file" accept="image/jpeg,image/jpg,image/png,image/heic,image/heif,.jpg,.jpeg,.png,.heic,.heif" />
           <div id="receiveOrderPreview" class="media-list"></div>
 
           <button type="button" class="secondary full-lite" id="runReceiveOcrBtn">Gemini OCR Pesanan & Cocokkan Qty</button>

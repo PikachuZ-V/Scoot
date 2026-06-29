@@ -575,6 +575,62 @@
     return "Rp " + Number(num || 0).toLocaleString("id-ID");
   }
 
+
+  function isHeicFile(fileOrName) {
+    var name = typeof fileOrName === "string" ? fileOrName : (fileOrName && fileOrName.name) || "";
+    var type = (fileOrName && fileOrName.type) || "";
+    return /heic|heif/i.test(type) || /\.(heic|heif)$/i.test(name);
+  }
+  function mediaTypeForFile(file) {
+    var type = (file && file.type) || "";
+    if (type.indexOf("video/") === 0 || /\.(mp4|mov|webm|m4v)$/i.test((file && file.name) || "")) return "video";
+    return "photo";
+  }
+  function readBlobAsDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function (ev) { resolve(ev.target.result); };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+  async function fileToPreviewUrl(file) {
+    if (isHeicFile(file) && window.heic2any) {
+      try {
+        var converted = await window.heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
+        if (Array.isArray(converted)) converted = converted[0];
+        return URL.createObjectURL(converted);
+      } catch (err) { console.warn("HEIC preview conversion failed", err); }
+    }
+    return URL.createObjectURL(file);
+  }
+  async function fileToDataUrl(file) {
+    if (isHeicFile(file) && window.heic2any) {
+      try {
+        var converted = await window.heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
+        if (Array.isArray(converted)) converted = converted[0];
+        return await readBlobAsDataUrl(converted);
+      } catch (err) { console.warn("HEIC data conversion failed", err); }
+    }
+    return await readBlobAsDataUrl(file);
+  }
+  async function fileToMediaObject(file, prefix, note, preferDataUrl) {
+    var src = preferDataUrl ? await fileToDataUrl(file) : await fileToPreviewUrl(file);
+    return {
+      id: uid(prefix || "media"),
+      temp_id: uid(prefix || "media"),
+      file: file,
+      preview_url: src,
+      file_name: file.name,
+      media_type: mediaTypeForFile(file),
+      size: file.size,
+      note: note || "",
+      original_file_type: file.type || "",
+      original_extension: ((file.name || "").split(".").pop() || "").toLowerCase(),
+      created_at: todayIso()
+    };
+  }
+
   function renderMediaGallery(items, label) {
     items = items || [];
     if (!items.length) return "";
@@ -597,6 +653,12 @@
     return html;
   }
 
+  var mediaPreviewZoom = 1;
+  function applyMediaPreviewZoom() {
+    var img = document.querySelector("#mediaPreviewBody .zoomable-media");
+    if (img) img.style.transform = "scale(" + mediaPreviewZoom + ")";
+    if ($("mediaZoomValue")) $("mediaZoomValue").textContent = Math.round(mediaPreviewZoom * 100) + "%";
+  }
   function openMediaPreviewFromElement(el) {
     if (!el) return;
     var src = el.getAttribute("data-preview-src") || el.getAttribute("src") || "";
@@ -606,16 +668,22 @@
     var note = el.getAttribute("data-preview-note") || "";
     var body = $("mediaPreviewBody");
     if (!body) return;
+    mediaPreviewZoom = 1;
     if ($("mediaPreviewTitle")) $("mediaPreviewTitle").textContent = title;
-    if (type === "video") body.innerHTML = '<video src="' + esc(src) + '" controls autoplay playsinline></video>';
-    else body.innerHTML = '<img src="' + esc(src) + '" alt="' + esc(title) + '">';
+    if (type === "video") {
+      body.innerHTML = '<video class="zoomable-media" src="' + esc(src) + '" controls autoplay playsinline></video>';
+    } else {
+      body.innerHTML = '<div class="zoom-toolbar"><button type="button" data-media-zoom="out">−</button><span id="mediaZoomValue">100%</span><button type="button" data-media-zoom="in">+</button><button type="button" data-media-zoom="reset">Reset</button></div><div class="zoom-pan"><img class="zoomable-media" src="' + esc(src) + '" alt="' + esc(title) + '"></div>';
+    }
     if ($("mediaPreviewNote")) $("mediaPreviewNote").textContent = note;
     if ($("mediaPreviewDialog")) $("mediaPreviewDialog").showModal();
+    applyMediaPreviewZoom();
   }
 
   function closeMediaPreview() {
     if ($("mediaPreviewDialog")) $("mediaPreviewDialog").close();
     if ($("mediaPreviewBody")) $("mediaPreviewBody").innerHTML = "";
+    mediaPreviewZoom = 1;
   }
 
 
@@ -723,7 +791,7 @@
         '<div class="motor-status-top"><div><div class="motor-code">Motor ' + esc(motor.motor_code || '-') + '</div><div class="card-sub">' + esc(motor.type || '-') + ' · ' + esc(motor.color || '-') + ' · ' + esc(loc) + '</div></div>' +
         '<span class="tag ' + motorStatusClass(st) + '">' + esc(motorStatusText(st)) + '</span></div>' +
         '<div class="motor-info-grid"><span>Plat</span><b>' + esc(motor.plate_number || '-') + '</b><span>' + (st === 'ready' ? 'Tanggal ready/service terakhir' : 'Dari') + '</span><b>' + esc(st === 'ready' ? readyDate : fromDate) + '</b><span>Kerusakan</span><b>' + esc(report.damage_notes || '-') + '</b><span>Kebutuhan</span><b>' + esc(requestNeedSummary(useReq)) + '</b></div>' +
-        '<div class="card-actions"><button class="secondary" data-motor-detail="' + esc(motor.id) + '">Lihat Detail Motor</button>' + ((currentRole() === 'admin' || currentRole() === 'owner') && st === 'ready' ? '<button class="ghost danger-lite" data-quick-return-motor="' + esc(motor.id) + '">Retur Maintenance</button>' : '') + '</div>' +
+        '<div class="card-actions"><button class="secondary" data-motor-detail="' + esc(motor.id) + '" data-request-detail="' + esc(useReq ? useReq.id : '') + '" data-motor-detail-context="' + (st === 'ready' ? 'history' : 'current') + '">Lihat Detail Motor</button>' + ((currentRole() === 'admin' || currentRole() === 'owner') && st === 'ready' ? '<button class="ghost danger-lite" data-quick-return-motor="' + esc(motor.id) + '">Retur Maintenance</button>' : '') + '</div>' +
         '</div>';
     }
 
@@ -757,7 +825,7 @@
     return renderMediaGallery(a.received_goods_media || [], 'Foto Barang Sampai');
   }
 
-  function openMotorDetail(motorId, context) {
+  function openMotorDetail(motorId, context, requestId) {
     context = context || motorDetailContext || 'current';
     var motor = state.motors.find(function (m) { return m.id === motorId; });
     if (!motor) return;
@@ -765,13 +833,15 @@
     var st = computedMotorStatus(motor);
     var allActive = activeRequestsForMotor(motor.id).slice().sort(function (a,b) { return String(b.created_at||'').localeCompare(String(a.created_at||'')); });
     var activeRows = allActive;
-    var doneRows = state.part_requests.filter(function (r) { return r.motor_id === motor.id && r.status === 'completed'; }).sort(function (a,b) { return String(b.completed_at||b.created_at||'').localeCompare(String(a.completed_at||a.created_at||'')); });
+    var doneRows = state.part_requests.filter(function (r) { return r.motor_id === motor.id && r.status === 'completed'; }).sort(function (a,b) { return String(b.completed_at||b.updated_at||b.created_at||'').localeCompare(String(a.completed_at||a.updated_at||a.created_at||'')); });
     if (role === 'mekanik') {
       var mech = currentUserName();
       activeRows = activeRows.filter(function (r) { return r.mechanic_name === mech; });
       doneRows = doneRows.filter(function (r) { return r.mechanic_name === mech; });
     }
-    var latest = st === 'ready' ? (doneRows[0] || activeRows[0] || latestRequestForMotor(motor.id)) : (activeRows[0] || latestRequestForMotor(motor.id));
+
+    var selectedRequest = requestId ? state.part_requests.find(function (r) { return r.id === requestId && r.motor_id === motor.id; }) : null;
+    var latest = selectedRequest || (context === 'history' ? (doneRows[0] || activeRows[0] || latestRequestForMotor(motor.id)) : (st === 'ready' ? (doneRows[0] || activeRows[0] || latestRequestForMotor(motor.id)) : (activeRows[0] || latestRequestForMotor(motor.id))));
     var transferRows = role === 'mekanik' ? [] : getTransferItemsForMotor(motor.id);
     var report = latest ? (state.damage_reports.find(function (d) { return d.id === latest.report_id; }) || {}) : {};
     if ($('motorDetailTitle')) $('motorDetailTitle').textContent = 'Detail Motor ' + (motor.motor_code || '-');
@@ -783,23 +853,27 @@
     }
 
     var activeHtml = activeRows.length ? activeRows.slice(0, context === 'history' ? 20 : 1).map(function (r) { return requestCardHtml(r, role !== 'mekanik', role === 'mekanik', true); }).join('') : '<div class="muted">Tidak ada maintenance aktif.</div>';
-    var doneHtml = doneRows.length ? doneRows.slice(0, 10).map(function (r) { return requestCardHtml(r, role !== 'mekanik', role === 'mekanik', true); }).join('') : '<div class="muted">Belum ada history ready/service selesai.</div>';
+    var doneHtml = doneRows.length ? doneRows.slice(0, 20).map(function (r) { return requestCardHtml(r, role !== 'mekanik', role === 'mekanik', true); }).join('') : '<div class="muted">Belum ada history ready/service selesai.</div>';
     var showHistory = context === 'history';
+    var isCompletedDetail = latest && latest.status === 'completed';
+    var selectedTitle = isCompletedDetail ? 'Detail Service Selesai' : (selectedRequest ? 'Detail Request Dipilih' : 'Request Terbaru');
+    var readyDateForBox = doneRows[0] ? (doneRows[0].maintenance_done_date || formatDateTime(doneRows[0].completed_at)) : (isCompletedDetail ? (latest.maintenance_done_date || formatDateTime(latest.completed_at)) : '-');
     var body = '<div class="detail-hero"><div><h3>Motor ' + esc(motor.motor_code || '-') + ' · ' + esc(motor.type || '-') + '</h3><p>' + esc(motor.plate_number || '-') + ' · ' + esc(motor.color || '-') + ' · ' + esc(motor.outlet || '-') + '</p></div><span class="tag ' + motorStatusClass(st) + '">' + esc(motorStatusText(st)) + '</span></div>' +
       '<div class="detail-grid">' +
-      '<div class="detail-box"><span>Request terbaru / alasan</span><b>' + esc(report.damage_notes || (st === 'ready' ? 'Motor dalam kondisi ready.' : '-')) + '</b></div>' +
-      '<div class="detail-box"><span>Dari kapan</span><b>' + esc(latest ? formatDateTime(st === 'ongoing_maintenance' ? (latest.service_started_at || latest.created_at) : latest.created_at) : '-') + '</b></div>' +
-      '<div class="detail-box"><span>Butuh apa saja</span><b>' + esc(requestNeedSummary(latest)) + '</b></div>' +
-      '<div class="detail-box"><span>Tanggal ready terakhir</span><b>' + esc(doneRows[0] ? (doneRows[0].maintenance_done_date || formatDateTime(doneRows[0].completed_at)) : '-') + '</b></div>' +
+      '<div class="detail-box"><span>' + (isCompletedDetail ? 'Alasan service terakhir' : 'Request terbaru / alasan') + '</span><b>' + esc(report.damage_notes || (st === 'ready' ? 'Motor dalam kondisi ready.' : '-')) + '</b></div>' +
+      '<div class="detail-box"><span>' + (isCompletedDetail ? 'Tanggal request service' : 'Dari kapan') + '</span><b>' + esc(latest ? formatDateTime(isCompletedDetail ? latest.created_at : (st === 'ongoing_maintenance' ? (latest.service_started_at || latest.created_at) : latest.created_at)) : '-') + '</b></div>' +
+      '<div class="detail-box"><span>Butuh / dipakai apa saja</span><b>' + esc(requestNeedSummary(latest)) + '</b></div>' +
+      '<div class="detail-box"><span>Tanggal ready terakhir</span><b>' + esc(isCompletedDetail ? (latest.maintenance_done_date || formatDateTime(latest.completed_at)) : readyDateForBox) + '</b></div>' +
       '</div>' +
-      '<h3>Request Terbaru</h3><div class="card-list">' + latestOnlyHtml + '</div>';
-    if (showHistory) {
-      body += '<h3>Maintenance Aktif</h3><div class="card-list">' + activeHtml + '</div>' +
-        '<h3>History Ready / Service Selesai</h3><div class="card-list">' + doneHtml + '</div>';
+      '<h3>' + esc(selectedTitle) + '</h3><div class="card-list">' + latestOnlyHtml + '</div>';
+
+    if (showHistory || role === 'admin' || role === 'owner') {
+      body += collapsibleDetailHtml('History Service Motor', '<div class="card-list">' + doneHtml + '</div>', doneRows.length + ' selesai', context === 'history');
     } else {
       body += '<div class="notice compact">History lama hanya tampil di menu History Service.</div>';
     }
-    if (showHistory && transferRows.length) body += '<h3>History Pengiriman / Retur</h3><div class="card-list">' + transferRows.map(transferItemCardHtml).join('') + '</div>';
+    if (showHistory) body += '<h3>Maintenance Aktif</h3><div class="card-list">' + activeHtml + '</div>';
+    if ((showHistory || role === 'admin' || role === 'owner') && transferRows.length) body += collapsibleDetailHtml('History Pengiriman / Retur', '<div class="card-list">' + transferRows.map(transferItemCardHtml).join('') + '</div>', transferRows.length + ' movement', false);
     if ($('motorDetailBody')) $('motorDetailBody').innerHTML = body;
     if ($('motorDetailDialog')) $('motorDetailDialog').showModal();
   }
@@ -1265,7 +1339,7 @@
       completionHtml +
       (r.cancel_note ? '<div class="card-sub red-text">Alasan batal: ' + esc(r.cancel_note) + '</div>' : "");
     var detailCtx = activePage === "mechanic_history" ? "history" : "current";
-    var detailButton = '<div class="card-actions"><button type="button" class="ghost" data-motor-detail="' + esc(motor.id || '') + '" data-motor-detail-context="' + esc(detailCtx) + '">Lihat Detail Motor</button></div>';
+    var detailButton = '<div class="card-actions"><button type="button" class="ghost" data-motor-detail="' + esc(motor.id || '') + '" data-request-detail="' + esc(r.id || '') + '" data-motor-detail-context="' + esc(detailCtx) + '">Lihat Detail Motor</button></div>';
     var detailSection = collapseDetails && !compact ? collapsibleDetailHtml('Detail request, bukti, dan OCR', detailHtml + detailButton, 'klik untuk buka', false) : (detailHtml + detailButton);
     return '<div class="card' + (compact ? ' compact-card' : '') + '">' +
       '<div class="card-head"><div><div class="card-title">Motor ' + esc(motor.motor_code || "-") + ' · ' + esc(motor.type || "-") + '</div>' +
@@ -1467,7 +1541,7 @@
     });
     $("dashboardListTitle").textContent = role === "mekanik" ? "Motor yang Saya Service" : "Request Per Motor";
     var pager = paginateRows('dashboard', rows, PAGE_SIZE);
-    $("dashboardList").innerHTML = rows.length ? pager.rows.map(function (r) { return requestCardHtml(r, true); }).join("") + paginationHtml('dashboard', pager) : '<div class="muted">Belum ada data untuk dashboard role ini.</div>';
+    $("dashboardList").innerHTML = rows.length ? pager.rows.map(function (r) { return requestCardHtml(r, true, false, true); }).join("") + paginationHtml('dashboard', pager) : '<div class="muted">Belum ada data untuk dashboard role ini.</div>';
   }
 
   function refreshSparepartDatalist() {
@@ -1563,19 +1637,9 @@
     $("driveFolderHint").innerHTML = 'Folder otomatis nanti: <b>Rental Motor Reports / Motor ' + esc(code) + ' / ' + todayDashed() + ' - RPT...</b>';
   }
 
-  function handleMediaFiles() {
+  async function handleMediaFiles() {
     var files = Array.prototype.slice.call($("mediaUpload").files || []);
-    selectedMedia = files.map(function (file) {
-      return {
-        temp_id: uid("media"),
-        file: file,
-        preview_url: URL.createObjectURL(file),
-        file_name: file.name,
-        media_type: file.type.indexOf("video/") === 0 ? "video" : "photo",
-        size: file.size,
-        note: ""
-      };
-    });
+    selectedMedia = await Promise.all(files.map(function (file) { return fileToMediaObject(file, "media", "", false); }));
     renderSelectedMedia();
   }
 
@@ -1616,17 +1680,10 @@
     });
   }
 
-  function handleSelfTakeMediaFiles(e) {
-    selectedSelfTakeMedia.forEach(function (m) { if (m.preview_url) URL.revokeObjectURL(m.preview_url); });
-    selectedSelfTakeMedia = Array.prototype.slice.call(e.target.files || []).map(function (file) {
-      return {
-        file_name: file.name,
-        preview_url: URL.createObjectURL(file),
-        media_type: file.type.indexOf("video/") === 0 ? "video" : "photo",
-        size: file.size,
-        note: "Bukti ambil sparepart"
-      };
-    });
+  async function handleSelfTakeMediaFiles(e) {
+    selectedSelfTakeMedia.forEach(function (m) { if (m.preview_url && /^blob:/.test(m.preview_url)) URL.revokeObjectURL(m.preview_url); });
+    var files = Array.prototype.slice.call(e.target.files || []);
+    selectedSelfTakeMedia = await Promise.all(files.map(function (file) { return fileToMediaObject(file, "self_media", "Bukti ambil sparepart", false); }));
     renderSelfTakeMedia();
   }
 
@@ -1863,13 +1920,12 @@
       var note = prompt("Catatan selesai service / kondisi motor ready:", "Motor sudah selesai maintenance dan ready.") || "Motor sudah selesai maintenance dan ready.";
       var input = document.createElement("input");
       input.type = "file";
-      input.accept = "image/*,video/*";
+      input.accept = "image/jpeg,image/jpg,image/png,image/heic,image/heif,.jpg,.jpeg,.png,.heic,.heif,video/*";
       input.multiple = true;
-      input.onchange = function () {
+      input.onchange = async function () {
         var files = Array.prototype.slice.call(input.files || []);
-        var media = files.map(function (file) {
-          return { id: uid("ready"), media_type: file.type.indexOf("video/") === 0 ? "video" : "photo", file_name: file.name, file_size: file.size, preview_url: URL.createObjectURL(file), file_url: "", note: note, created_at: todayIso() };
-        });
+        var media = await Promise.all(files.map(function (file) { return fileToMediaObject(file, "ready", note, false); }));
+        media.forEach(function (m) { m.file_size = m.size; m.file_url = ""; });
         r.status = "completed";
         r.completed_at = todayIso();
         r.completed_by_mechanic = r.mechanic_name || currentUserName();
@@ -2074,25 +2130,14 @@
     wrap.innerHTML = renderMediaGallery([checkoutProofPreview], "Preview Bukti Checkout");
   }
 
-  function handleCheckoutProofFile(e) {
+  async function handleCheckoutProofFile(e) {
     var file = (e.target.files || [])[0];
     if (!file) return;
-    var reader = new FileReader();
-    reader.onload = function (ev) {
-      checkoutProofPreview = {
-        id: uid("checkout_ss"),
-        media_type: file.type.indexOf("video/") === 0 ? "video" : "photo",
-        file_name: file.name,
-        file_size: file.size,
-        preview_url: ev.target.result,
-        file_url: "",
-        note: "Screenshot before checkout marketplace",
-        created_at: todayIso()
-      };
-      renderCheckoutUploadPreview();
-      if ($("checkoutOcrText")) $("checkoutOcrText").value = "";
-    };
-    reader.readAsDataURL(file);
+    checkoutProofPreview = await fileToMediaObject(file, "checkout_ss", "Screenshot before checkout marketplace", true);
+    checkoutProofPreview.file_size = checkoutProofPreview.size;
+    checkoutProofPreview.file_url = "";
+    renderCheckoutUploadPreview();
+    if ($("checkoutOcrText")) $("checkoutOcrText").value = "";
   }
 
   var DEMO_GEMINI_KEY_STORAGE = "rental_motor_demo_gemini_api_key";
@@ -2629,31 +2674,22 @@
     if ($("receiveOrderPreview")) $("receiveOrderPreview").innerHTML = receiveOrderScreenshot ? renderMediaGallery([receiveOrderScreenshot], "Preview SS Pesanan") : "";
   }
 
-  function handleReceiveGoodsFiles() {
+  async function handleReceiveGoodsFiles() {
     var files = Array.prototype.slice.call($("receiveGoodsFile").files || []);
     receiveGoodsMedia = [];
     if (!files.length) { renderReceiveProofPreviews(); return; }
-    var pending = files.length;
-    files.forEach(function (file) {
-      var reader = new FileReader();
-      reader.onload = function (ev) {
-        receiveGoodsMedia.push({ id: uid("received_goods"), media_type: file.type.indexOf("video/") === 0 ? "video" : "photo", file_name: file.name, file_size: file.size, preview_url: ev.target.result, file_url: "", note: "Bukti foto/video barang orderan tiba", created_at: todayIso() });
-        pending -= 1;
-        if (pending <= 0) renderReceiveProofPreviews();
-      };
-      reader.readAsDataURL(file);
-    });
+    receiveGoodsMedia = await Promise.all(files.map(function (file) { return fileToMediaObject(file, "received_goods", "Bukti foto/video barang orderan tiba", true); }));
+    receiveGoodsMedia.forEach(function (m) { m.file_size = m.size; m.file_url = ""; });
+    renderReceiveProofPreviews();
   }
 
-  function handleReceiveOrderFile() {
+  async function handleReceiveOrderFile() {
     var file = ($("receiveOrderFile").files || [])[0];
     if (!file) { receiveOrderScreenshot = null; renderReceiveProofPreviews(); return; }
-    var reader = new FileReader();
-    reader.onload = function (ev) {
-      receiveOrderScreenshot = { id: uid("received_order"), media_type: "photo", file_name: file.name, file_size: file.size, preview_url: ev.target.result, file_url: "", note: "SS halaman pesanan marketplace", created_at: todayIso() };
-      renderReceiveProofPreviews();
-    };
-    reader.readAsDataURL(file);
+    receiveOrderScreenshot = await fileToMediaObject(file, "received_order", "SS halaman pesanan marketplace", true);
+    receiveOrderScreenshot.file_size = receiveOrderScreenshot.size;
+    receiveOrderScreenshot.file_url = "";
+    renderReceiveProofPreviews();
   }
 
   function openReceiveDialog(r) {
@@ -3380,21 +3416,32 @@
   function renderOwnerOverview() {
     if (!$('overviewList')) return;
     var q = ($('overviewSearch') && $('overviewSearch').value || '').toLowerCase();
+    var filter = ($('overviewStatusFilter') && $('overviewStatusFilter').value) || 'all';
+    var groups = {
+      request_baru: ['submitted_by_mechanic', 'reviewed_by_admin', 'self_take_waiting_review'],
+      menunggu_barang: ['waiting_owner_approval', 'owner_approved', 'purchase_pending', 'received_by_warehouse'],
+      ongoing: ['stock_out_generated', 'ongoing_maintenance'],
+      completed: ['completed'],
+      revision: ['revision_needed', 'owner_rejected', 'cancelled', 'self_take_rejected']
+    };
     var rows = state.part_requests.slice().reverse().filter(function (r) {
+      if (filter !== 'all' && (!groups[filter] || groups[filter].indexOf(r.status) < 0)) return false;
       var motor = state.motors.find(function (m) { return m.id === r.motor_id; }) || {};
       var report = state.damage_reports.find(function (d) { return d.id === r.report_id; }) || {};
       var items = getItemsForRequest(r.id).map(function (i) { return i.sparepart_name; }).join(' ');
       return (motor.motor_code + ' ' + items + ' ' + r.status + ' ' + report.damage_notes + ' ' + (r.mechanic_name || '')).toLowerCase().indexOf(q) >= 0;
     });
     var summary = [
-      { title: 'Request Baru', statuses: ['submitted_by_mechanic', 'reviewed_by_admin', 'self_take_waiting_review'] },
-      { title: 'Menunggu Barang', statuses: ['waiting_owner_approval', 'owner_approved', 'purchase_pending', 'received_by_warehouse'] },
-      { title: 'Ongoing Maintenance', statuses: ['stock_out_generated', 'ongoing_maintenance'] },
-      { title: 'Sudah Service', statuses: ['completed'] }
+      { key: 'request_baru', title: 'Request Baru', statuses: groups.request_baru },
+      { key: 'menunggu_barang', title: 'Menunggu Barang', statuses: groups.menunggu_barang },
+      { key: 'ongoing', title: 'Ongoing Maintenance', statuses: groups.ongoing },
+      { key: 'completed', title: 'Sudah Service', statuses: groups.completed },
+      { key: 'revision', title: 'Revisi / Ditolak / Batal', statuses: groups.revision }
     ];
     $('overviewSummary').innerHTML = summary.map(function (sec) {
       var count = state.part_requests.filter(function (r) { return sec.statuses.indexOf(r.status) >= 0; }).length;
-      return '<div class="status-section"><div class="status-count">' + count + '</div><h3>' + esc(sec.title) + '</h3></div>';
+      var active = filter === sec.key ? ' active-filter' : '';
+      return '<button type="button" class="status-section overview-filter-card' + active + '" data-overview-filter="' + esc(sec.key) + '"><div class="status-count">' + count + '</div><h3>' + esc(sec.title) + '</h3><span class="muted">klik untuk filter</span></button>';
     }).join('');
     var pager = paginateRows('overview', rows, PAGE_SIZE);
     $('overviewList').innerHTML = rows.length ? pager.rows.map(function (r) { return requestCardHtml(r, true, true); }).join('') + paginationHtml('overview', pager) : '<div class="muted">Belum ada data overview.</div>';
@@ -3942,6 +3989,7 @@
     if ($("movementSearch")) $("movementSearch").addEventListener("input", renderMovements);
     $("ownerSearch").addEventListener("input", renderOwner);
     if ($("overviewSearch")) $("overviewSearch").addEventListener("input", renderOwnerOverview);
+    if ($("overviewStatusFilter")) $("overviewStatusFilter").addEventListener("change", function () { setPageKey("overview", 1); renderOwnerOverview(); });
     if ($("monitorSearch")) $("monitorSearch").addEventListener("input", function(){ setPageKey("monitor_" + activeMonitorTab, 1); setPageKey("monitor_ready_hq", 1); setPageKey("monitor_ready_canggu", 1); setPageKey("monitor_ready_other", 1); renderMotorMonitor(); });
     if ($("monitorPageSize")) $("monitorPageSize").addEventListener("change", function(){ pageState = {}; renderMotorMonitor(); });
     if ($("motorTransferForm")) $("motorTransferForm").addEventListener("submit", createMotorTransfer);
@@ -3993,11 +4041,23 @@
     if ($("manualSyncBtn")) $("manualSyncBtn").addEventListener("click", reloadCloudData);
     if ($("logoutBtn")) $("logoutBtn").addEventListener("click", logout);
     document.body.addEventListener("click", function (e) {
+      var zoomBtn = e.target.closest && e.target.closest("[data-media-zoom]");
+      if (zoomBtn) {
+        e.preventDefault();
+        var z = zoomBtn.getAttribute("data-media-zoom");
+        if (z === "in") mediaPreviewZoom = Math.min(4, mediaPreviewZoom + 0.25);
+        else if (z === "out") mediaPreviewZoom = Math.max(0.5, mediaPreviewZoom - 0.25);
+        else mediaPreviewZoom = 1;
+        applyMediaPreviewZoom();
+        return;
+      }
       if (e.target.closest && e.target.closest(".media-open")) {
         e.preventDefault();
         openMediaPreviewFromElement(e.target.closest(".media-open"));
         return;
       }
+      var overviewFilterBtn = e.target.closest && e.target.closest("[data-overview-filter]");
+      if (overviewFilterBtn) { e.preventDefault(); if ($("overviewStatusFilter")) $("overviewStatusFilter").value = overviewFilterBtn.getAttribute("data-overview-filter"); setPageKey("overview", 1); renderOwnerOverview(); return; }
       var pagerBtn = e.target.closest && e.target.closest("[data-page-key]");
       if (pagerBtn) { e.preventDefault(); handlePagerClick(pagerBtn.getAttribute("data-page-key"), pagerBtn.getAttribute("data-page-to")); return; }
       var scanBtn = e.target.closest && e.target.closest("[data-scan-target]");
@@ -4017,7 +4077,7 @@
       if (selfTakeReview) { e.preventDefault(); handleSelfTakeReviewAction(selfTakeReview, selfTakeBtn.getAttribute("data-id")); return; }
       var motorDetailBtn = e.target.closest && e.target.closest("[data-motor-detail]");
       var motorDetailId = motorDetailBtn ? motorDetailBtn.getAttribute("data-motor-detail") : "";
-      if (motorDetailId) { e.preventDefault(); openMotorDetail(motorDetailId, motorDetailBtn.getAttribute("data-motor-detail-context") || "current"); return; }
+      if (motorDetailId) { e.preventDefault(); openMotorDetail(motorDetailId, motorDetailBtn.getAttribute("data-motor-detail-context") || "current", motorDetailBtn.getAttribute("data-request-detail") || ""); return; }
       var copyWaId = e.target.getAttribute("data-copy-wa");
       if (copyWaId) copyWhatsAppLog(copyWaId);
       var quickReturnId = e.target.getAttribute("data-quick-return-motor");
