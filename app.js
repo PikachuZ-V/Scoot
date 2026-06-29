@@ -188,7 +188,7 @@
     if (!box) return;
     if (!query || !String(query).trim()) { box.innerHTML = ''; box.classList.remove('active'); return; }
     if (!suggestions.length) {
-      box.innerHTML = '<button type="button" class="suggestion new" data-part-new="true"><b>Sparepart baru:</b> ' + esc(query) + '<small>Belum ada di master. Akan direview admin dan masuk master setelah barang diterima.</small></button>';
+      box.innerHTML = '<button type="button" class="suggestion new" data-part-new="true" data-new-part-name="' + esc(query) + '"><b>Sparepart baru:</b> ' + esc(query) + '<small>Belum ada di master. Akan direview admin dan masuk master setelah barang diterima.</small></button>';
       box.classList.add('active');
       return;
     }
@@ -196,7 +196,7 @@
       var cls = Number(p.stock || 0) > 0 ? 'green' : 'red';
       return '<button type="button" class="suggestion" data-suggest-part-id="' + esc(p.id) + '">' +
         '<b>' + esc(p.name) + '</b><small><span class="tag ' + cls + '">Stok ' + esc(p.stock || 0) + '</span> <span class="tag gray">' + esc(p.room || '-') + ' · ' + esc(p.rack || '-') + '</span></small></button>';
-    }).join('') + '<button type="button" class="suggestion new" data-part-new="true"><b>Tidak ada yang sesuai?</b> Ajukan sebagai sparepart baru: ' + esc(query) + '</button>';
+    }).join('') + '<button type="button" class="suggestion new" data-part-new="true" data-new-part-name="' + esc(query) + '"><b>Tidak ada yang sesuai?</b> Ajukan sebagai sparepart baru: ' + esc(query) + '</button>';
     box.classList.add('active');
   }
 
@@ -472,7 +472,7 @@
     if ((req && req.stock_out_code) || hasStockOutMovement(requestId)) return false;
     return getItemsForRequest(requestId).some(function (i) {
       var nowStock = currentStockForItem(i);
-      return i.stock_status === "stock_empty" && nowStock < Number(i.qty_requested || 0);
+      return i.is_new_part_request || i.stock_status === "new_part" || (i.stock_status === "stock_empty" && nowStock < Number(i.qty_requested || 0));
     });
   }
 
@@ -1176,9 +1176,10 @@
     var itemHtml = items.map(function (item) {
       var nowStock = currentStockForItem(item);
       var enoughNow = nowStock >= Number(item.qty_requested || 0);
-      var stockClass = enoughNow ? "green" : "red";
+      var stockClass = item.is_new_part_request || item.stock_status === "new_part" ? "yellow" : (enoughNow ? "green" : "red");
       var link = item.recommended_purchase_link ? ' · <a href="' + esc(item.recommended_purchase_link) + '" target="_blank">Link beli</a>' : "";
-      return '<div><span class="tag ' + stockClass + '">' + esc(item.sparepart_name) + ' · Qty ' + esc(item.qty_requested) + ' · Stok sekarang ' + esc(nowStock) + '</span><span class="tag gray">Saat request ' + esc(item.stock_snapshot) + '</span>' + link + '</div>';
+      var newTag = item.is_new_part_request || item.stock_status === "new_part" ? '<span class="tag yellow">sparepartbaru</span> ' : '';
+      return '<div>' + newTag + '<span class="tag ' + stockClass + '">' + esc(item.sparepart_name) + ' · Qty ' + esc(item.qty_requested) + ' · Stok sekarang ' + esc(nowStock) + '</span><span class="tag gray">Saat request ' + esc(item.stock_snapshot) + '</span>' + link + '</div>';
     }).join("");
     var mediaHtml = (withMedia && report.media_items && report.media_items.length && !compact) ? renderMediaGallery(report.media_items, "Preview Foto/Video Kerusakan") : "";
     var folderHtml = (report.drive_folder_path && !compact) ? '<div class="drive-path">Simulasi folder GDrive: ' + esc(report.drive_folder_path) + '</div>' : "";
@@ -1433,41 +1434,58 @@
     $("requestItems").appendChild(wrap);
     refreshSparepartDatalist();
     var input = wrap.querySelector(".part-name-input");
-    input.addEventListener("input", function () { updatePartMeta(wrap); });
-    input.addEventListener("focus", function () { updatePartMeta(wrap); });
+    input.addEventListener("input", function () {
+      wrap.dataset.suggestionClosed = "";
+      wrap.dataset.newPartRequest = "";
+      updatePartMeta(wrap);
+    });
+    input.addEventListener("focus", function () {
+      if (wrap.dataset.suggestionClosed !== "1") updatePartMeta(wrap);
+    });
     wrap.querySelector(".part-suggestion-list").addEventListener("click", function (e) {
       var btn = e.target.closest("[data-suggest-part-id], [data-part-new]");
       if (!btn) return;
       e.preventDefault();
+      var list = wrap.querySelector(".part-suggestion-list");
       if (btn.getAttribute("data-suggest-part-id")) {
         var p = state.spareparts.find(function (x) { return x.id === btn.getAttribute("data-suggest-part-id"); });
         if (p) {
           input.value = p.name;
-          wrap.querySelector(".part-suggestion-list").innerHTML = "";
-          wrap.querySelector(".part-suggestion-list").classList.remove("active");
-          updatePartMeta(wrap);
+          wrap.dataset.newPartRequest = "";
+          wrap.dataset.selectedPartId = p.id;
+          wrap.dataset.suggestionClosed = "1";
+          list.innerHTML = "";
+          list.classList.remove("active");
+          updatePartMeta(wrap, true);
         }
       } else {
-        wrap.querySelector(".part-suggestion-list").innerHTML = "";
-        wrap.querySelector(".part-suggestion-list").classList.remove("active");
-        updatePartMeta(wrap);
+        var newName = btn.getAttribute("data-new-part-name") || input.value;
+        input.value = newName;
+        wrap.dataset.newPartRequest = "true";
+        wrap.dataset.selectedPartId = "";
+        wrap.dataset.suggestionClosed = "1";
+        list.innerHTML = "";
+        list.classList.remove("active");
+        updatePartMeta(wrap, true);
       }
     });
     wrap.querySelector(".remove-item-btn").addEventListener("click", function () { wrap.parentNode.removeChild(wrap); });
   }
 
-  function updatePartMeta(row) {
+  function updatePartMeta(row, suppressSuggestions) {
     var rawName = row.querySelector(".part-name-input").value.trim();
-    var part = findSparepartByName(rawName);
+    var forceNew = row.dataset.newPartRequest === "true";
+    var part = forceNew ? null : findSparepartByName(rawName);
     var meta = row.querySelector(".item-meta");
     var linkInput = row.querySelector(".part-link-input");
-    renderPartSuggestions(row, suggestSpareparts(rawName), rawName);
+    if (!suppressSuggestions && row.dataset.suggestionClosed !== "1") renderPartSuggestions(row, suggestSpareparts(rawName), rawName);
     if (!rawName) {
+      row.dataset.newPartRequest = "";
       meta.innerHTML = 'Ketik nama sparepart, rekomendasi stok gudang akan muncul otomatis.';
       return;
     }
-    if (!part) {
-      meta.innerHTML = '<span class="tag yellow">Sparepart baru / belum ada master</span> Admin review, ajukan CO, lalu saat barang diterima akan otomatis dibuat di Master Data.';
+    if (forceNew || !part) {
+      meta.innerHTML = '<span class="tag yellow">Status: sparepartbaru</span> Belum ada di master. Admin review, ajukan CO, lalu saat barang diterima akan otomatis dibuat di Master Data.';
       return;
     }
     var stockTag = Number(part.stock) > 0 ? '<span class="tag green">Stok: ' + esc(part.stock) + '</span>' : '<span class="tag red">Stok kosong</span>';
@@ -1692,22 +1710,24 @@
       var row = rows[i];
       var name = row.querySelector(".part-name-input").value.trim();
       var qty = Number(row.querySelector(".part-qty-input").value || 1);
-      var part = findSparepartByName(name);
+      var forcedNew = row.dataset.newPartRequest === "true";
+      var part = forcedNew ? null : findSparepartByName(name);
+      var isNewPart = forcedNew || !part;
       if (!name || qty <= 0) return alert("Nama sparepart dan qty wajib diisi.");
       requestItems.push({
         id: uid("item"),
         request_id: request.id,
         sparepart_id: part ? part.id : null,
-        sparepart_code: part ? part.sparepart_code : "MANUAL",
+        sparepart_code: part ? part.sparepart_code : "SPAREPARTBARU",
         sparepart_name: name,
         qty_requested: qty,
         qty_approved: 0,
         stock_snapshot: part ? Number(part.stock || 0) : 0,
-        stock_status: part && Number(part.stock || 0) >= qty ? "stock_available" : "stock_empty",
+        stock_status: isNewPart ? "new_part" : (part && Number(part.stock || 0) >= qty ? "stock_available" : "stock_empty"),
         recommended_purchase_link: row.querySelector(".part-link-input").value.trim() || (part ? part.default_purchase_link : ""),
         estimated_price: Number(row.querySelector(".part-price-input").value || 0),
-        status: "submitted_by_mechanic",
-        is_new_part_request: !part
+        status: isNewPart ? "sparepartbaru" : "submitted_by_mechanic",
+        is_new_part_request: isNewPart
       });
     }
     state.damage_reports.push(report);
@@ -1888,7 +1908,7 @@
       } else if (r.status === "cancelled") {
         actions += '<button class="secondary" data-admin-action="restore" data-id="' + esc(r.id) + '">Pulihkan Request</button>';
       } else if (r.status === "completed") {
-        actions += '<button class="ghost" data-admin-action="reopen" data-id="' + esc(r.id) + '">Buka Lagi</button>';
+        actions += '<span class="tag green">Selesai · masuk History Service</span>';
       }
       actions += '</div>';
       return base.replace(/<\/div>$/, actions + '</div>');
@@ -2802,7 +2822,10 @@
     if (action === "resubmit") {
       r.status = r.stock_out_code ? "stock_out_generated" : (r.previous_status && r.previous_status !== "revision_needed" ? r.previous_status : "reviewed_by_admin");
     }
-    if (action === "reopen") r.status = r.stock_out_code ? "stock_out_generated" : "reviewed_by_admin";
+    if (action === "reopen") {
+      if (r.status === "completed") { alert("Request yang sudah selesai tidak bisa dibuka lagi. Data selesai masuk ke History Service."); return; }
+      r.status = r.stock_out_code ? "stock_out_generated" : "reviewed_by_admin";
+    }
     if (action === "cancel") {
       if (r.stock_out_code && !confirm("Request ini sudah punya stock keluar " + r.stock_out_code + ". Membatalkan tidak otomatis mengembalikan stok jika stock keluar sudah dibuat. Lanjut batalkan?")) return;
       var reason = prompt("Alasan pembatalan:", r.cancel_note || "");
@@ -3911,17 +3934,21 @@
       var scanBtn = e.target.closest && e.target.closest("[data-scan-target]");
       var scanTarget = scanBtn ? scanBtn.getAttribute("data-scan-target") : "";
       if (scanTarget) { e.preventDefault(); startScan(scanTarget); }
-      var adminAction = e.target.getAttribute("data-admin-action");
-      if (adminAction) handleAdminAction(adminAction, e.target.getAttribute("data-id"));
-      var ownerAction = e.target.getAttribute("data-owner-action");
-      if (ownerAction) handleOwnerAction(ownerAction, e.target.getAttribute("data-id"));
-      var mechanicAction = e.target.getAttribute("data-mechanic-action");
-      if (mechanicAction) handleMechanicAction(mechanicAction, e.target.getAttribute("data-id"));
-      var selfTakeReview = e.target.getAttribute("data-selftake-review");
-      if (selfTakeReview) handleSelfTakeReviewAction(selfTakeReview, e.target.getAttribute("data-id"));
+      var adminBtn = e.target.closest && e.target.closest("[data-admin-action]");
+      var adminAction = adminBtn ? adminBtn.getAttribute("data-admin-action") : "";
+      if (adminAction) { e.preventDefault(); handleAdminAction(adminAction, adminBtn.getAttribute("data-id")); return; }
+      var ownerBtn = e.target.closest && e.target.closest("[data-owner-action]");
+      var ownerAction = ownerBtn ? ownerBtn.getAttribute("data-owner-action") : "";
+      if (ownerAction) { e.preventDefault(); handleOwnerAction(ownerAction, ownerBtn.getAttribute("data-id")); return; }
+      var mechanicBtn = e.target.closest && e.target.closest("[data-mechanic-action]");
+      var mechanicAction = mechanicBtn ? mechanicBtn.getAttribute("data-mechanic-action") : "";
+      if (mechanicAction) { e.preventDefault(); handleMechanicAction(mechanicAction, mechanicBtn.getAttribute("data-id")); return; }
+      var selfTakeBtn = e.target.closest && e.target.closest("[data-selftake-review]");
+      var selfTakeReview = selfTakeBtn ? selfTakeBtn.getAttribute("data-selftake-review") : "";
+      if (selfTakeReview) { e.preventDefault(); handleSelfTakeReviewAction(selfTakeReview, selfTakeBtn.getAttribute("data-id")); return; }
       var motorDetailBtn = e.target.closest && e.target.closest("[data-motor-detail]");
       var motorDetailId = motorDetailBtn ? motorDetailBtn.getAttribute("data-motor-detail") : "";
-      if (motorDetailId) openMotorDetail(motorDetailId, motorDetailBtn.getAttribute("data-motor-detail-context") || "current");
+      if (motorDetailId) { e.preventDefault(); openMotorDetail(motorDetailId, motorDetailBtn.getAttribute("data-motor-detail-context") || "current"); return; }
       var copyWaId = e.target.getAttribute("data-copy-wa");
       if (copyWaId) copyWhatsAppLog(copyWaId);
       var quickReturnId = e.target.getAttribute("data-quick-return-motor");
