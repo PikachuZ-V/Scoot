@@ -1178,3 +1178,153 @@ dialog {
     padding: 10px;
   }
 }
+
+/* V20 - Pengiriman motor dropdown realtime + Ready HQ/Canggu */
+.monitor-location-summary {
+  grid-column: 1 / -1;
+}
+.monitor-location-block {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px;
+  background: #fff;
+  margin-top: 12px;
+}
+.monitor-location-block .inner-grid {
+  margin-top: 12px;
+}
+.empty-card {
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  background: #f8fafc;
+}
+.transfer-section-card.ready-send-card {
+  border-color: #bbf7d0;
+  background: #f7fff9;
+}
+.transfer-section-card.return-card {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+.section-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.section-title-row h3 {
+  margin: 0;
+}
+.large-multi-select {
+  min-height: 170px;
+  width: 100%;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 14px;
+}
+.large-multi-select option {
+  padding: 8px;
+  white-space: normal;
+}
+.selected-motor-breakdown {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+.selected-motor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 170px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255,255,255,.85);
+}
+.selected-motor-row b,
+.selected-motor-row span,
+.selected-motor-row small {
+  display: block;
+}
+.selected-motor-row span,
+.selected-motor-row small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.selected-motor-row input[type="date"] {
+  height: 38px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  width: 100%;
+}
+@media (max-width: 640px) {
+  .section-title-row { flex-direction: column; }
+  .selected-motor-row { grid-template-columns: 1fr; }
+  .large-multi-select { min-height: 150px; }
+}
+
+/* v21 UI/UX refinements */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  background: rgba(243, 246, 252, .96);
+  backdrop-filter: blur(10px);
+  padding-top: 8px;
+  padding-bottom: 10px;
+}
+.hamburger { display: grid; place-items: center; flex: 0 0 auto; position: sticky; top: 10px; z-index: 26; }
+.part-input-wrap { position: relative; }
+.part-suggestion-list {
+  display: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 18px 35px rgba(15,23,42,.15);
+  overflow: hidden;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.part-suggestion-list.active { display: grid; }
+.suggestion {
+  background: #fff;
+  text-align: left;
+  padding: 11px 12px;
+  border-bottom: 1px solid #eef2f7;
+  display: grid;
+  gap: 5px;
+  color: var(--text);
+}
+.suggestion:hover { background: #f8fafc; }
+.suggestion small { color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; }
+.suggestion.new { background: #fff7ed; color: #9a3412; }
+.pager {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 13px;
+}
+.pager button[disabled] { opacity: .45; cursor: not-allowed; }
+#reader { min-height: 260px; display: grid; place-items: center; background: #f8fafc; border-radius: 14px; overflow: hidden; }
+#scanDialog .dialog-head { position: sticky; top: 0; background: #fff; z-index: 2; padding-bottom: 8px; }
+@media (max-width: 760px) {
+  .topbar { margin-left: -14px; margin-right: -14px; padding-left: 14px; padding-right: 14px; }
+  .part-suggestion-list { position: fixed; left: 14px; right: 14px; top: auto; bottom: 16px; max-height: 55vh; }
+  .pager { justify-content: stretch; }
+  .pager button { flex: 1; }
+}

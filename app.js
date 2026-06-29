@@ -21,6 +21,9 @@
   var cloudSaveTimer = null;
   var hasBoundAuthEvents = false;
   var userAccessRows = [];
+  var pageState = {};
+  var PAGE_SIZE = 15;
+  var motorDetailContext = "current";
 
   var titles = {
     dashboard: ["Dashboard", "Ringkasan request, stok, dan pekerjaan motor sesuai role user."],
@@ -121,6 +124,112 @@
     if (currentSession && currentSession.user && currentSession.user.email) return currentSession.user.email;
     return "User";
   }
+
+
+  function normalizeKey(text) {
+    return String(text || "").toLowerCase().replace(/[^a-z0-9]+/gi, " ").trim().replace(/\s+/g, " ");
+  }
+
+  function getPageKey(key) { return pageState[key] || 1; }
+  function setPageKey(key, page) { pageState[key] = Math.max(1, Number(page || 1)); }
+  function paginateRows(key, rows, pageSize) {
+    pageSize = pageSize || PAGE_SIZE;
+    var page = getPageKey(key);
+    var totalPages = Math.max(1, Math.ceil((rows || []).length / pageSize));
+    if (page > totalPages) { page = totalPages; pageState[key] = page; }
+    var start = (page - 1) * pageSize;
+    return { rows: (rows || []).slice(start, start + pageSize), page: page, totalPages: totalPages, total: (rows || []).length, pageSize: pageSize };
+  }
+  function paginationHtml(key, pager) {
+    if (!pager || pager.totalPages <= 1) return "";
+    var start = pager.total ? ((pager.page - 1) * pager.pageSize + 1) : 0;
+    var end = Math.min(pager.page * pager.pageSize, pager.total);
+    return '<div class="pager" data-pager-key="' + esc(key) + '">' +
+      '<button type="button" class="ghost pager-btn" data-page-key="' + esc(key) + '" data-page-to="prev"' + (pager.page <= 1 ? ' disabled' : '') + '>‹ Prev</button>' +
+      '<span>Data ' + esc(start) + '-' + esc(end) + ' dari ' + esc(pager.total) + ' · Hal ' + esc(pager.page) + '/' + esc(pager.totalPages) + '</span>' +
+      '<button type="button" class="ghost pager-btn" data-page-key="' + esc(key) + '" data-page-to="next"' + (pager.page >= pager.totalPages ? ' disabled' : '') + '>Next ›</button>' +
+      '</div>';
+  }
+  function handlePagerClick(key, to) {
+    var now = getPageKey(key);
+    setPageKey(key, to === 'prev' ? now - 1 : now + 1);
+    renderAll();
+  }
+
+  function findSparepartByName(name) {
+    var key = normalizeKey(name);
+    if (!key) return null;
+    return state.spareparts.find(function (p) { return normalizeKey(p.name) === key; }) || null;
+  }
+
+  function suggestSpareparts(keyword, limit) {
+    var key = normalizeKey(keyword);
+    limit = limit || 8;
+    if (!key) return [];
+    var terms = key.split(' ').filter(Boolean);
+    return state.spareparts.map(function (p) {
+      var pkey = normalizeKey([p.name, p.sparepart_code, p.room, p.rack].join(' '));
+      var score = 0;
+      terms.forEach(function (t) {
+        if (pkey === t) score += 20;
+        else if (pkey.indexOf(t) >= 0) score += 8;
+        if (normalizeKey(p.name).indexOf(t) >= 0) score += 10;
+      });
+      if (normalizeKey(p.name).indexOf(key) === 0) score += 20;
+      if (Number(p.stock || 0) > 0) score += 5;
+      return { part: p, score: score };
+    }).filter(function (x) { return x.score > 0; })
+      .sort(function (a,b) { return b.score - a.score || Number(b.part.stock||0) - Number(a.part.stock||0) || String(a.part.name).localeCompare(String(b.part.name)); })
+      .slice(0, limit).map(function (x) { return x.part; });
+  }
+
+  function renderPartSuggestions(row, suggestions, query) {
+    var box = row.querySelector('.part-suggestion-list');
+    if (!box) return;
+    if (!query || !String(query).trim()) { box.innerHTML = ''; box.classList.remove('active'); return; }
+    if (!suggestions.length) {
+      box.innerHTML = '<button type="button" class="suggestion new" data-part-new="true"><b>Sparepart baru:</b> ' + esc(query) + '<small>Belum ada di master. Akan direview admin dan masuk master setelah barang diterima.</small></button>';
+      box.classList.add('active');
+      return;
+    }
+    box.innerHTML = suggestions.map(function (p) {
+      var cls = Number(p.stock || 0) > 0 ? 'green' : 'red';
+      return '<button type="button" class="suggestion" data-suggest-part-id="' + esc(p.id) + '">' +
+        '<b>' + esc(p.name) + '</b><small><span class="tag ' + cls + '">Stok ' + esc(p.stock || 0) + '</span> <span class="tag gray">' + esc(p.room || '-') + ' · ' + esc(p.rack || '-') + '</span></small></button>';
+    }).join('') + '<button type="button" class="suggestion new" data-part-new="true"><b>Tidak ada yang sesuai?</b> Ajukan sebagai sparepart baru: ' + esc(query) + '</button>';
+    box.classList.add('active');
+  }
+
+  function ensureSparepartFromReceivedItem(item) {
+    var existing = item.sparepart_id ? state.spareparts.find(function (p) { return p.id === item.sparepart_id; }) : findSparepartByName(item.sparepart_name);
+    if (existing) {
+      item.sparepart_id = existing.id;
+      item.sparepart_code = existing.sparepart_code;
+      item.sparepart_name = existing.name;
+      return existing;
+    }
+    var code = nextSparepartCode();
+    var p = {
+      id: uid('sp'),
+      sparepart_code: code,
+      barcode_value: code,
+      name: item.sparepart_name,
+      unit: item.unit || 'pcs',
+      stock: 0,
+      minimum_stock: 1,
+      room: 'Gudang Sparepart 1',
+      rack: 'Belum ditentukan',
+      default_purchase_link: item.recommended_purchase_link || '',
+      auto_created_from_request: item.request_id,
+      created_at: todayIso()
+    };
+    state.spareparts.push(p);
+    item.sparepart_id = p.id;
+    item.sparepart_code = p.sparepart_code;
+    item.is_new_master_created = true;
+    return p;
+  }
+
   function currentUserEmail() {
     return currentSession && currentSession.user ? currentSession.user.email || "" : "";
   }
@@ -516,8 +625,32 @@
     return rows[0] || null;
   }
 
+  function latestTransferItemForMotor(motorId) {
+    var rows = getTransferItemsForMotor(motorId);
+    return rows.length ? rows[0] : null;
+  }
+
+  function eventDateValue(value) {
+    if (!value) return 0;
+    var s = String(value);
+    // transfer_date biasanya YYYY-MM-DD, dibuat akhir hari supaya dispatch ready hari itu mengalahkan request lama di tanggal yang sama.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) s += "T23:59:59";
+    var t = Date.parse(s);
+    return isNaN(t) ? 0 : t;
+  }
+
   function computedMotorStatus(motor) {
     var active = activeRequestsForMotor(motor.id);
+    var latestTransfer = latestTransferItemForMotor(motor.id);
+    var transferTime = latestTransfer ? eventDateValue(latestTransfer.transfer.transfer_date || latestTransfer.transfer.created_at) : 0;
+
+    if (latestTransfer && latestTransfer.item.direction === "send_ready" && String(motor.status || "").toLowerCase() === "ready") {
+      var newerActive = active.filter(function (r) { return eventDateValue(r.created_at || r.updated_at) > transferTime; });
+      if (!newerActive.length) return "ready";
+      active = newerActive;
+    }
+
+    if (latestTransfer && latestTransfer.item.direction === "return_maintenance") return "maintenance";
     if (active.some(function (r) { return r.status === "ongoing_maintenance"; })) return "ongoing_maintenance";
     if (active.length) return "maintenance";
     if (["maintenance", "return_maintenance", "retur_maintenance"].indexOf(motor.status) >= 0) return "maintenance";
@@ -547,7 +680,7 @@
       var rows = state.motors.filter(function (m) { return computedMotorStatus(m) === st; });
       return '<div class="status-section motor-status-summary ' + esc(st) + '"><div class="status-count">' + rows.length + '</div><h3>' + esc(motorStatusText(st)) + '</h3><div class="muted">' + (st === 'ready' ? 'Motor siap jalan' : (st === 'maintenance' ? 'Butuh barang / review / stock' : 'Sedang dikerjakan mekanik')) + '</div></div>';
     }).join('');
-    $('motorMonitorSummary').innerHTML = summary;
+    $('motorMonitorSummary').innerHTML = summary + '<div class="location-summary-grid monitor-location-summary">' + locationSummaryHtml(true) + '</div>';
 
     var rows = state.motors.filter(function (motor) {
       var st = computedMotorStatus(motor);
@@ -555,24 +688,39 @@
       var latest = latestRequestForMotor(motor.id) || {};
       var completed = latestCompletedRequestForMotor(motor.id) || {};
       var report = state.damage_reports.find(function (d) { return d.id === (latest.report_id || completed.report_id); }) || {};
-      var hay = [motor.motor_code, motor.plate_number, motor.type, motor.color, motor.outlet, st, report.damage_notes, requestNeedSummary(latest)].join(' ').toLowerCase();
+      var hay = [motor.motor_code, motor.plate_number, motor.type, motor.color, motor.outlet, motor.current_location, st, report.damage_notes, requestNeedSummary(latest)].join(' ').toLowerCase();
       return hay.indexOf(q) >= 0;
     });
-    $('motorMonitorList').innerHTML = rows.length ? rows.map(function (motor) {
+
+    function motorCard(motor) {
       var st = computedMotorStatus(motor);
       var latest = latestRequestForMotor(motor.id);
       var completed = latestCompletedRequestForMotor(motor.id);
       var useReq = st === 'ready' ? completed : latest;
       var report = useReq ? (state.damage_reports.find(function (d) { return d.id === useReq.report_id; }) || {}) : {};
       var fromDate = st === 'ongoing_maintenance' && useReq ? formatDateTime(useReq.service_started_at || useReq.created_at) : (useReq ? formatDateTime(useReq.created_at) : '-');
-      var readyDate = completed ? (completed.maintenance_done_date || formatDateTime(completed.completed_at)) : '-';
+      var readyDate = completed ? (completed.maintenance_done_date || formatDateTime(completed.completed_at)) : (motor.last_service_date || '-');
+      var loc = normalizeLocationName(motor.outlet || motor.current_location || motor.location || 'Lainnya');
       return '<div class="motor-status-card">' +
-        '<div class="motor-status-top"><div><div class="motor-code">Motor ' + esc(motor.motor_code || '-') + '</div><div class="card-sub">' + esc(motor.type || '-') + ' · ' + esc(motor.color || '-') + ' · ' + esc(motor.outlet || '-') + '</div></div>' +
+        '<div class="motor-status-top"><div><div class="motor-code">Motor ' + esc(motor.motor_code || '-') + '</div><div class="card-sub">' + esc(motor.type || '-') + ' · ' + esc(motor.color || '-') + ' · ' + esc(loc) + '</div></div>' +
         '<span class="tag ' + motorStatusClass(st) + '">' + esc(motorStatusText(st)) + '</span></div>' +
-        '<div class="motor-info-grid"><span>Plat</span><b>' + esc(motor.plate_number || '-') + '</b><span>' + (st === 'ready' ? 'Tanggal ready' : 'Dari') + '</span><b>' + esc(st === 'ready' ? readyDate : fromDate) + '</b><span>Kerusakan</span><b>' + esc(report.damage_notes || '-') + '</b><span>Kebutuhan</span><b>' + esc(requestNeedSummary(useReq)) + '</b></div>' +
-        '<div class="card-actions"><button class="secondary" data-motor-detail="' + esc(motor.id) + '">Lihat Detail Motor</button>' + (currentRole() === 'admin' && st === 'ready' ? '<button class="ghost danger-lite" data-quick-return-motor="' + esc(motor.id) + '">Retur Maintenance</button>' : '') + '</div>' +
+        '<div class="motor-info-grid"><span>Plat</span><b>' + esc(motor.plate_number || '-') + '</b><span>' + (st === 'ready' ? 'Tanggal ready/service terakhir' : 'Dari') + '</span><b>' + esc(st === 'ready' ? readyDate : fromDate) + '</b><span>Kerusakan</span><b>' + esc(report.damage_notes || '-') + '</b><span>Kebutuhan</span><b>' + esc(requestNeedSummary(useReq)) + '</b></div>' +
+        '<div class="card-actions"><button class="secondary" data-motor-detail="' + esc(motor.id) + '">Lihat Detail Motor</button>' + ((currentRole() === 'admin' || currentRole() === 'owner') && st === 'ready' ? '<button class="ghost danger-lite" data-quick-return-motor="' + esc(motor.id) + '">Retur Maintenance</button>' : '') + '</div>' +
         '</div>';
-    }).join('') : '<div class="muted">Tidak ada motor untuk status ini.</div>';
+    }
+
+    if (activeMonitorTab === 'ready') {
+      var readyHQ = rows.filter(function (m) { return normalizeLocationName(m.outlet || m.current_location || m.location) === 'HQ'; });
+      var readyCanggu = rows.filter(function (m) { return normalizeLocationName(m.outlet || m.current_location || m.location) === 'Canggu'; });
+      var readyOther = rows.filter(function (m) { var loc = normalizeLocationName(m.outlet || m.current_location || m.location); return loc !== 'HQ' && loc !== 'Canggu'; });
+      $('motorMonitorList').innerHTML =
+        '<div class="monitor-location-block"><div class="section-title-row"><h3>Ready di HQ</h3><span class="tag green">' + readyHQ.length + ' motor</span></div><div class="monitor-grid inner-grid">' + (readyHQ.length ? readyHQ.map(motorCard).join('') : '<div class="muted empty-card">Tidak ada motor ready di HQ.</div>') + '</div></div>' +
+        '<div class="monitor-location-block"><div class="section-title-row"><h3>Ready di Canggu</h3><span class="tag green">' + readyCanggu.length + ' motor</span></div><div class="monitor-grid inner-grid">' + (readyCanggu.length ? readyCanggu.map(motorCard).join('') : '<div class="muted empty-card">Tidak ada motor ready di Canggu.</div>') + '</div></div>' +
+        (readyOther.length ? '<div class="monitor-location-block"><div class="section-title-row"><h3>Ready Lokasi Lain</h3><span class="tag gray">' + readyOther.length + ' motor</span></div><div class="monitor-grid inner-grid">' + readyOther.map(motorCard).join('') + '</div></div>' : '');
+      return;
+    }
+
+    $('motorMonitorList').innerHTML = rows.length ? rows.map(motorCard).join('') : '<div class="muted">Tidak ada motor untuk status ini.</div>';
   }
 
   function setMonitorTab(tab) {
@@ -585,28 +733,55 @@
     renderMotorMonitor();
   }
 
-  function openMotorDetail(motorId) {
+  function mechanicReceiveGoodsHtmlForRequest(requestId) {
+    var a = latestApprovalForRequest(requestId);
+    if (!a || !(a.received_goods_media || []).length) return '';
+    return renderMediaGallery(a.received_goods_media || [], 'Foto Barang Sampai');
+  }
+
+  function openMotorDetail(motorId, context) {
+    context = context || motorDetailContext || 'current';
     var motor = state.motors.find(function (m) { return m.id === motorId; });
     if (!motor) return;
+    var role = currentRole();
     var st = computedMotorStatus(motor);
-    var activeRows = activeRequestsForMotor(motor.id).slice().sort(function (a,b) { return String(b.created_at||'').localeCompare(String(a.created_at||'')); });
+    var allActive = activeRequestsForMotor(motor.id).slice().sort(function (a,b) { return String(b.created_at||'').localeCompare(String(a.created_at||'')); });
+    var activeRows = allActive;
     var doneRows = state.part_requests.filter(function (r) { return r.motor_id === motor.id && r.status === 'completed'; }).sort(function (a,b) { return String(b.completed_at||b.created_at||'').localeCompare(String(a.completed_at||a.created_at||'')); });
-    var latest = st === 'ready' ? (doneRows[0] || latestRequestForMotor(motor.id)) : (activeRows[0] || latestRequestForMotor(motor.id));
-    var transferRows = getTransferItemsForMotor(motor.id);
+    if (role === 'mekanik') {
+      var mech = currentUserName();
+      activeRows = activeRows.filter(function (r) { return r.mechanic_name === mech; });
+      doneRows = doneRows.filter(function (r) { return r.mechanic_name === mech; });
+    }
+    var latest = st === 'ready' ? (doneRows[0] || activeRows[0] || latestRequestForMotor(motor.id)) : (activeRows[0] || latestRequestForMotor(motor.id));
+    var transferRows = role === 'mekanik' ? [] : getTransferItemsForMotor(motor.id);
     var report = latest ? (state.damage_reports.find(function (d) { return d.id === latest.report_id; }) || {}) : {};
     if ($('motorDetailTitle')) $('motorDetailTitle').textContent = 'Detail Motor ' + (motor.motor_code || '-');
-    var activeHtml = activeRows.length ? activeRows.map(function (r) { return requestCardHtml(r, true, false); }).join('') : '<div class="muted">Tidak ada maintenance aktif.</div>';
-    var doneHtml = doneRows.length ? doneRows.slice(0, 5).map(function (r) { return requestCardHtml(r, true, false); }).join('') : '<div class="muted">Belum ada history ready/service selesai.</div>';
+
+    var latestOnlyHtml = latest ? requestCardHtml(latest, role !== 'mekanik', role === 'mekanik', true) : '<div class="muted">Belum ada request aktif terbaru.</div>';
+    if (role === 'mekanik' && latest) {
+      var goods = mechanicReceiveGoodsHtmlForRequest(latest.id);
+      if (goods) latestOnlyHtml += '<details class="detail-dropdown"><summary><span><b>Foto barang sampai</b><small>mekanik hanya melihat bukti barang diterima</small></span><span class="chevron">⌄</span></summary><div class="detail-dropdown-body">' + goods + '</div></details>';
+    }
+
+    var activeHtml = activeRows.length ? activeRows.slice(0, context === 'history' ? 20 : 1).map(function (r) { return requestCardHtml(r, role !== 'mekanik', role === 'mekanik', true); }).join('') : '<div class="muted">Tidak ada maintenance aktif.</div>';
+    var doneHtml = doneRows.length ? doneRows.slice(0, 10).map(function (r) { return requestCardHtml(r, role !== 'mekanik', role === 'mekanik', true); }).join('') : '<div class="muted">Belum ada history ready/service selesai.</div>';
+    var showHistory = context === 'history';
     var body = '<div class="detail-hero"><div><h3>Motor ' + esc(motor.motor_code || '-') + ' · ' + esc(motor.type || '-') + '</h3><p>' + esc(motor.plate_number || '-') + ' · ' + esc(motor.color || '-') + ' · ' + esc(motor.outlet || '-') + '</p></div><span class="tag ' + motorStatusClass(st) + '">' + esc(motorStatusText(st)) + '</span></div>' +
       '<div class="detail-grid">' +
-      '<div class="detail-box"><span>Kenapa maintenance</span><b>' + esc(report.damage_notes || (st === 'ready' ? 'Motor dalam kondisi ready.' : '-')) + '</b></div>' +
+      '<div class="detail-box"><span>Request terbaru / alasan</span><b>' + esc(report.damage_notes || (st === 'ready' ? 'Motor dalam kondisi ready.' : '-')) + '</b></div>' +
       '<div class="detail-box"><span>Dari kapan</span><b>' + esc(latest ? formatDateTime(st === 'ongoing_maintenance' ? (latest.service_started_at || latest.created_at) : latest.created_at) : '-') + '</b></div>' +
       '<div class="detail-box"><span>Butuh apa saja</span><b>' + esc(requestNeedSummary(latest)) + '</b></div>' +
       '<div class="detail-box"><span>Tanggal ready terakhir</span><b>' + esc(doneRows[0] ? (doneRows[0].maintenance_done_date || formatDateTime(doneRows[0].completed_at)) : '-') + '</b></div>' +
       '</div>' +
-      '<h3>Maintenance Aktif</h3><div class="card-list">' + activeHtml + '</div>' +
-      '<h3>History Ready / Service Selesai</h3><div class="card-list">' + doneHtml + '</div>' +
-      '<h3>History Pengiriman / Retur</h3><div class="card-list">' + (transferRows.length ? transferRows.map(transferItemCardHtml).join('') : '<div class="muted">Belum ada pengiriman/retur untuk motor ini.</div>') + '</div>'; 
+      '<h3>Request Terbaru</h3><div class="card-list">' + latestOnlyHtml + '</div>';
+    if (showHistory) {
+      body += '<h3>Maintenance Aktif</h3><div class="card-list">' + activeHtml + '</div>' +
+        '<h3>History Ready / Service Selesai</h3><div class="card-list">' + doneHtml + '</div>';
+    } else {
+      body += '<div class="notice compact">History lama hanya tampil di menu History Service.</div>';
+    }
+    if (showHistory && transferRows.length) body += '<h3>History Pengiriman / Retur</h3><div class="card-list">' + transferRows.map(transferItemCardHtml).join('') + '</div>';
     if ($('motorDetailBody')) $('motorDetailBody').innerHTML = body;
     if ($('motorDetailDialog')) $('motorDetailDialog').showModal();
   }
@@ -653,17 +828,101 @@
       '<div class="card-sub">Service terakhir: <b>' + esc(it.last_service_date || latestServiceDateForMotor(it.motor_id) || '-') + '</b></div>' +
       (it.note ? '<div class="muted">' + esc(it.note) + '</div>' : '') + '</div>';
   }
+  function selectedValues(id) {
+    var el = $(id);
+    if (!el) return [];
+    return Array.prototype.slice.call(el.selectedOptions || []).map(function (o) { return o.value; }).filter(Boolean);
+  }
+
+  function allMotorLocations() {
+    var map = { HQ: true, Canggu: true };
+    (state.motors || []).forEach(function (m) {
+      map[normalizeLocationName(m.outlet || m.current_location || m.location)] = true;
+    });
+    return Object.keys(map).sort(function (a,b) {
+      var order = { HQ: 1, Canggu: 2, Lainnya: 99 };
+      return (order[a] || 50) - (order[b] || 50) || a.localeCompare(b);
+    });
+  }
+
+  function fillLocationSelect(id, preferred) {
+    var el = $(id);
+    if (!el) return;
+    var current = el.value || preferred || '';
+    var options = allMotorLocations();
+    if (preferred && options.indexOf(preferred) < 0) options.unshift(preferred);
+    el.innerHTML = options.map(function (loc) { return '<option value="' + esc(loc) + '">' + esc(loc) + '</option>'; }).join('');
+    el.value = options.indexOf(current) >= 0 ? current : (preferred || options[0] || 'HQ');
+  }
+
+  function motorOptionLabel(motor) {
+    var st = motorStatusText(computedMotorStatus(motor));
+    var loc = normalizeLocationName(motor.outlet || motor.current_location || motor.location);
+    var svc = latestServiceDateForMotor(motor.id) || motor.last_service_date || '-';
+    return 'Motor ' + (motor.motor_code || '-') + ' · ' + (motor.type || '-') + ' · ' + (motor.plate_number || '-') + ' · ' + loc + ' · ' + st + ' · service: ' + svc;
+  }
+
+  function populateMotorMultiSelect(id, rows, oldSelected) {
+    var el = $(id);
+    if (!el) return;
+    oldSelected = oldSelected || selectedValues(id);
+    el.innerHTML = rows.map(function (m) { return '<option value="' + esc(m.id) + '">' + esc(motorOptionLabel(m)) + '</option>'; }).join('');
+    Array.prototype.slice.call(el.options || []).forEach(function (opt) {
+      opt.selected = oldSelected.indexOf(opt.value) >= 0;
+    });
+  }
+
+  function eligibleReadySendMotors(location) {
+    location = normalizeLocationName(location || 'HQ');
+    return (state.motors || []).filter(function (m) {
+      return computedMotorStatus(m) === 'ready' && normalizeLocationName(m.outlet || m.current_location || m.location) === location;
+    }).sort(function (a,b) { return String(a.motor_code || '').localeCompare(String(b.motor_code || ''), 'id', { numeric: true }); });
+  }
+
+  function eligibleReturnMotors(location) {
+    location = normalizeLocationName(location || 'Canggu');
+    return (state.motors || []).filter(function (m) {
+      return normalizeLocationName(m.outlet || m.current_location || m.location) === location;
+    }).sort(function (a,b) { return String(a.motor_code || '').localeCompare(String(b.motor_code || ''), 'id', { numeric: true }); });
+  }
+
+  function selectedMotorBreakdownHtml(ids, type) {
+    if (!ids.length) return '<div class="muted empty-card">Belum ada motor dipilih.</div>';
+    return ids.map(function (id) {
+      var m = state.motors.find(function (x) { return x.id === id; }) || {};
+      var svc = latestServiceDateForMotor(id) || m.last_service_date || '';
+      var loc = normalizeLocationName(m.outlet || m.current_location || m.location);
+      var dateInput = type === 'return' ? '<input type="date" class="transfer-service-date" data-service-motor-id="' + esc(id) + '" value="' + esc(svc) + '" />' : '<b>' + esc(svc || '-') + '</b>';
+      return '<div class="selected-motor-row"><div><b>Motor ' + esc(m.motor_code || '-') + '</b><span>' + esc(m.type || '-') + ' · ' + esc(m.plate_number || '-') + ' · ' + esc(loc) + '</span></div><div><small>Service terakhir</small>' + dateInput + '</div></div>';
+    }).join('');
+  }
+
+  function refreshTransferFormOptions() {
+    if (!$('motorTransferForm')) return;
+    fillLocationSelect('transferSendFrom', 'HQ');
+    fillLocationSelect('transferSendTo', 'Canggu');
+    fillLocationSelect('transferReturnFrom', 'Canggu');
+    fillLocationSelect('transferReturnTo', 'HQ');
+
+    var sendFrom = $('transferSendFrom') ? $('transferSendFrom').value : 'HQ';
+    var returnFrom = $('transferReturnFrom') ? $('transferReturnFrom').value : 'Canggu';
+    populateMotorMultiSelect('transferSendMotors', eligibleReadySendMotors(sendFrom));
+    populateMotorMultiSelect('transferReturnMotors', eligibleReturnMotors(returnFrom));
+
+    var sendIds = selectedValues('transferSendMotors');
+    var returnIds = selectedValues('transferReturnMotors');
+    if ($('transferSendBreakdown')) $('transferSendBreakdown').innerHTML = selectedMotorBreakdownHtml(sendIds, 'send');
+    if ($('transferReturnBreakdown')) $('transferReturnBreakdown').innerHTML = selectedMotorBreakdownHtml(returnIds, 'return');
+  }
+
   function renderMotorTransfers() {
     if (!$('transferList')) return;
     var role = currentRole();
     var form = $('motorTransferForm');
-    if (form) form.style.display = role === 'admin' ? 'block' : 'none';
+    if (form) form.style.display = (role === 'admin' || role === 'owner') ? 'block' : 'none';
     if ($('transferAdminName') && !$('transferAdminName').value) $('transferAdminName').value = currentUserName();
     if ($('transferDate') && !$('transferDate').value) $('transferDate').value = todayDashed();
-    if ($('transferSendFrom') && !$('transferSendFrom').value) $('transferSendFrom').value = 'HQ';
-    if ($('transferSendTo') && !$('transferSendTo').value) $('transferSendTo').value = 'Canggu';
-    if ($('transferReturnFrom') && !$('transferReturnFrom').value) $('transferReturnFrom').value = 'Canggu';
-    if ($('transferReturnTo') && !$('transferReturnTo').value) $('transferReturnTo').value = 'HQ';
+    refreshTransferFormOptions();
     var q = ($('transferSearch') && $('transferSearch').value || '').toLowerCase();
     var transfers = (state.motor_transfers || []).slice().sort(function (a,b) { return String(b.created_at || b.transfer_date || '').localeCompare(String(a.created_at || a.transfer_date || '')); });
     var totalSent = 0, totalReturned = 0;
@@ -678,7 +937,8 @@
       (t.items || []).forEach(function (it) { var m = state.motors.find(function (x) { return x.id === it.motor_id; }) || {}; hay += ' ' + [it.motor_code, m.motor_code, m.plate_number, it.direction, it.note].join(' '); });
       return hay.toLowerCase().indexOf(q) >= 0;
     });
-    $('transferList').innerHTML = filtered.length ? filtered.map(function (t) {
+    var pager = paginateRows('transfers', filtered, PAGE_SIZE);
+    $('transferList').innerHTML = filtered.length ? pager.rows.map(function (t) {
       var sent = (t.items || []).filter(function (it) { return it.direction === 'send_ready'; });
       var ret = (t.items || []).filter(function (it) { return it.direction === 'return_maintenance'; });
       var deltaText = t.location_delta_summary || transferDeltaSummary(sent.length, ret.length, t.send_from_location || t.from_location || 'HQ', t.send_to_location || t.to_location || 'Canggu', t.return_from_location || 'Canggu', t.return_to_location || 'HQ');
@@ -687,58 +947,69 @@
         '<details class="detail-dropdown"><summary><span><b>Motor Ready Dikirim</b><small>' + sent.length + ' motor</small></span><span class="chevron">⌄</span></summary><div class="detail-dropdown-body">' + (sent.length ? sent.map(function (it) { return transferItemCardHtml({ transfer: t, item: it }); }).join('') : '<div class="muted">Tidak ada motor ready dikirim.</div>') + '</div></details>' +
         '<details class="detail-dropdown"><summary><span><b>Motor Retur Maintenance</b><small>' + ret.length + ' motor</small></span><span class="chevron">⌄</span></summary><div class="detail-dropdown-body">' + (ret.length ? ret.map(function (it) { return transferItemCardHtml({ transfer: t, item: it }); }).join('') : '<div class="muted">Tidak ada motor retur.</div>') + '</div></details>' +
         (t.note ? '<div class="card-sub"><b>Catatan:</b> ' + esc(t.note) + '</div>' : '') + '</div>';
-    }).join('') : '<div class="muted">Belum ada data pengiriman/retur motor.</div>';
+    }).join('') + paginationHtml('transfers', pager) : '<div class="muted">Belum ada data pengiriman/retur motor.</div>';
   }
+
   function createMotorTransfer(e) {
     e.preventDefault();
     var transferDate = $('transferDate').value || todayDashed();
-    var sendFrom = ($('transferSendFrom') && $('transferSendFrom').value.trim()) || 'HQ';
-    var sendTo = ($('transferSendTo') && $('transferSendTo').value.trim()) || 'Canggu';
-    var returnFrom = ($('transferReturnFrom') && $('transferReturnFrom').value.trim()) || 'Canggu';
-    var returnTo = ($('transferReturnTo') && $('transferReturnTo').value.trim()) || 'HQ';
+    var sendFrom = ($('transferSendFrom') && $('transferSendFrom').value) || 'HQ';
+    var sendTo = ($('transferSendTo') && $('transferSendTo').value) || 'Canggu';
+    var returnFrom = ($('transferReturnFrom') && $('transferReturnFrom').value) || 'Canggu';
+    var returnTo = ($('transferReturnTo') && $('transferReturnTo').value) || 'HQ';
     var adminName = $('transferAdminName').value.trim() || currentUserName();
     var note = $('transferNote').value.trim();
-    var lastService = $('transferLastServiceDate').value || '';
-    var sendCodes = parseMotorCodes($('transferSendCodes').value);
-    var returnCodes = parseMotorCodes($('transferReturnCodes').value);
-    if (!sendCodes.length && !returnCodes.length) return alert('Isi minimal 1 motor ready dikirim atau 1 motor retur maintenance.');
+    var sendIds = selectedValues('transferSendMotors');
+    var returnIds = selectedValues('transferReturnMotors');
+    if (!sendIds.length && !returnIds.length) return alert('Pilih minimal 1 motor ready dikirim atau 1 motor retur maintenance.');
     var missing = [];
+    var invalid = [];
     var items = [];
-    sendCodes.forEach(function (code) {
-      var motor = findMotorByCode(code);
-      if (!motor) { missing.push(code); return; }
-      motor.outlet = sendTo;
-      motor.current_location = sendTo;
+    sendIds.forEach(function (id) {
+      var motor = state.motors.find(function (m) { return m.id === id; });
+      if (!motor) { missing.push(id); return; }
+      if (computedMotorStatus(motor) !== 'ready') { invalid.push('Motor ' + (motor.motor_code || id) + ' bukan Ready'); return; }
+      if (normalizeLocationName(motor.outlet || motor.current_location || motor.location) !== normalizeLocationName(sendFrom)) { invalid.push('Motor ' + (motor.motor_code || id) + ' tidak di ' + sendFrom); return; }
+      var serviceDate = latestServiceDateForMotor(motor.id) || motor.last_service_date || '';
+      motor.outlet = normalizeLocationName(sendTo);
+      motor.current_location = normalizeLocationName(sendTo);
       motor.status = 'ready';
       motor.last_dispatch_date = transferDate;
-      motor.last_dispatch_from = sendFrom;
-      motor.last_dispatch_to = sendTo;
-      items.push({ id: uid('trfi'), direction: 'send_ready', motor_id: motor.id, motor_code: motor.motor_code, from_location: sendFrom, to_location: sendTo, last_service_date: latestServiceDateForMotor(motor.id), note: 'Motor ready dikirim dari ' + sendFrom + ' ke ' + sendTo });
+      motor.last_dispatch_from = normalizeLocationName(sendFrom);
+      motor.last_dispatch_to = normalizeLocationName(sendTo);
+      if (serviceDate) motor.last_service_date = serviceDate;
+      items.push({ id: uid('trfi'), direction: 'send_ready', motor_id: motor.id, motor_code: motor.motor_code, from_location: normalizeLocationName(sendFrom), to_location: normalizeLocationName(sendTo), last_service_date: serviceDate, note: 'Motor ready dikirim dari ' + sendFrom + ' ke ' + sendTo });
     });
-    returnCodes.forEach(function (code) {
-      var motor = findMotorByCode(code);
-      if (!motor) { missing.push(code); return; }
-      motor.outlet = returnTo;
-      motor.current_location = returnTo;
+    returnIds.forEach(function (id) {
+      var motor = state.motors.find(function (m) { return m.id === id; });
+      if (!motor) { missing.push(id); return; }
+      if (normalizeLocationName(motor.outlet || motor.current_location || motor.location) !== normalizeLocationName(returnFrom)) { invalid.push('Motor ' + (motor.motor_code || id) + ' tidak di ' + returnFrom); return; }
+      var dateEl = Array.prototype.slice.call(document.querySelectorAll('[data-service-motor-id]')).find(function (el) { return el.getAttribute('data-service-motor-id') === id; });
+      var serviceDate = dateEl && dateEl.value ? dateEl.value : (latestServiceDateForMotor(motor.id) || motor.last_service_date || '');
+      motor.outlet = normalizeLocationName(returnTo);
+      motor.current_location = normalizeLocationName(returnTo);
       motor.status = 'maintenance';
-      motor.return_from_location = returnFrom;
-      motor.return_to_location = returnTo;
+      motor.return_from_location = normalizeLocationName(returnFrom);
+      motor.return_to_location = normalizeLocationName(returnTo);
       motor.return_date = transferDate;
       motor.return_note = note || 'Retur dari outlet untuk maintenance.';
-      motor.last_service_date = lastService || motor.last_service_date || latestServiceDateForMotor(motor.id);
-      items.push({ id: uid('trfi'), direction: 'return_maintenance', motor_id: motor.id, motor_code: motor.motor_code, from_location: returnFrom, to_location: returnTo, last_service_date: motor.last_service_date || '', note: note || 'Retur dari ' + returnFrom + ' ke ' + returnTo + ' untuk maintenance.' });
+      motor.last_service_date = serviceDate || motor.last_service_date || '';
+      items.push({ id: uid('trfi'), direction: 'return_maintenance', motor_id: motor.id, motor_code: motor.motor_code, from_location: normalizeLocationName(returnFrom), to_location: normalizeLocationName(returnTo), last_service_date: motor.last_service_date || '', note: note || 'Retur dari ' + returnFrom + ' ke ' + returnTo + ' untuk maintenance.' });
     });
-    if (!items.length) return alert('Tidak ada nomor motor yang cocok. Cek ulang input.');
-    var transfer = { id: uid('trf'), transfer_code: seq('TRF', state.motor_transfers || [], 'transfer_code'), transfer_date: transferDate, from_location: sendFrom, to_location: sendTo, send_from_location: sendFrom, send_to_location: sendTo, return_from_location: returnFrom, return_to_location: returnTo, admin_name: adminName, note: note, items: items, location_delta_summary: transferDeltaSummary(sendCodes.length, returnCodes.length, sendFrom, sendTo, returnFrom, returnTo), created_at: todayIso(), created_by: currentUserName() };
+    if (!items.length) return alert('Tidak ada motor yang valid untuk disimpan. ' + (invalid.length ? invalid.join('; ') : ''));
+    var transfer = { id: uid('trf'), transfer_code: seq('TRF', state.motor_transfers || [], 'transfer_code'), transfer_date: transferDate, from_location: normalizeLocationName(sendFrom), to_location: normalizeLocationName(sendTo), send_from_location: normalizeLocationName(sendFrom), send_to_location: normalizeLocationName(sendTo), return_from_location: normalizeLocationName(returnFrom), return_to_location: normalizeLocationName(returnTo), admin_name: adminName, note: note, items: items, location_delta_summary: transferDeltaSummary(sendIds.length, returnIds.length, sendFrom, sendTo, returnFrom, returnTo), created_at: todayIso(), created_by: currentUserName() };
     state.motor_transfers.unshift(transfer);
     save();
+    if ($('transferNote')) $('transferNote').value = '';
+    if ($('transferSendMotors')) Array.prototype.slice.call($('transferSendMotors').options).forEach(function (o) { o.selected = false; });
+    if ($('transferReturnMotors')) Array.prototype.slice.call($('transferReturnMotors').options).forEach(function (o) { o.selected = false; });
     renderAll();
-    $('transferSendCodes').value = '';
-    $('transferReturnCodes').value = '';
-    $('transferNote').value = '';
-    if (missing.length) alert('Tersimpan, tapi nomor ini tidak ditemukan: ' + missing.join(', '));
-    else alert('Pengiriman/retur motor tersimpan.');
+    var msg = 'Pengiriman/retur motor tersimpan.';
+    if (missing.length) msg += '\nTidak ditemukan: ' + missing.join(', ');
+    if (invalid.length) msg += '\nDilewati: ' + invalid.join('; ');
+    alert(msg);
   }
+
   function quickReturnMotor(motorId) {
     var motor = state.motors.find(function (m) { return m.id === motorId; });
     if (!motor) return;
@@ -933,7 +1204,8 @@
       (approval && !compact ? receiveProofHtml(approval) : "") +
       completionHtml +
       (r.cancel_note ? '<div class="card-sub red-text">Alasan batal: ' + esc(r.cancel_note) + '</div>' : "");
-    var detailButton = '<div class="card-actions"><button type="button" class="ghost" data-motor-detail="' + esc(motor.id || '') + '">Lihat Detail Motor</button></div>';
+    var detailCtx = activePage === "mechanic_history" ? "history" : "current";
+    var detailButton = '<div class="card-actions"><button type="button" class="ghost" data-motor-detail="' + esc(motor.id || '') + '" data-motor-detail-context="' + esc(detailCtx) + '">Lihat Detail Motor</button></div>';
     var detailSection = collapseDetails && !compact ? collapsibleDetailHtml('Detail request, bukti, dan OCR', detailHtml + detailButton, 'klik untuk buka', false) : (detailHtml + detailButton);
     return '<div class="card' + (compact ? ' compact-card' : '') + '">' +
       '<div class="card-head"><div><div class="card-title">Motor ' + esc(motor.motor_code || "-") + ' · ' + esc(motor.type || "-") + '</div>' +
@@ -1132,7 +1404,8 @@
       return (motor.motor_code + " " + items + " " + r.status + " " + report.damage_notes + " " + (r.mechanic_name || "")).toLowerCase().indexOf(q) >= 0;
     });
     $("dashboardListTitle").textContent = role === "mekanik" ? "Status & History Service Saya" : "Request Per Motor";
-    $("dashboardList").innerHTML = rows.length ? rows.map(function (r) { return requestCardHtml(r, true); }).join("") : '<div class="muted">Belum ada data untuk dashboard role ini.</div>';
+    var pager = paginateRows('dashboard', rows, PAGE_SIZE);
+    $("dashboardList").innerHTML = rows.length ? pager.rows.map(function (r) { return requestCardHtml(r, true); }).join("") + paginationHtml('dashboard', pager) : '<div class="muted">Belum ada data untuk dashboard role ini.</div>';
   }
 
   function refreshSparepartDatalist() {
@@ -1148,10 +1421,10 @@
     var wrap = document.createElement("div");
     wrap.className = "item-row";
     wrap.innerHTML = '<div class="item-grid">' +
-      '<div><input class="part-name-input" list="sparepartOptions" placeholder="Ketik nama sparepart..." required></div>' +
+      '<div class="part-input-wrap"><input class="part-name-input" autocomplete="off" placeholder="Ketik nama sparepart..." required><div class="part-suggestion-list"></div></div>' +
       '<div><input class="part-qty-input" type="number" min="1" value="1" required></div>' +
       '</div>' +
-      '<div class="item-meta muted">Stok dan lokasi akan muncul otomatis.</div>' +
+      '<div class="item-meta muted">Ketik nama sparepart, rekomendasi stok gudang akan muncul otomatis.</div>' +
       '<label>Link rekomendasi pembelian / Shopee</label>' +
       '<input class="part-link-input" placeholder="Isi kalau stok kosong / ada rekomendasi lain">' +
       '<label>Estimasi harga</label>' +
@@ -1159,17 +1432,42 @@
       '<button type="button" class="danger remove-item-btn">Hapus item</button>';
     $("requestItems").appendChild(wrap);
     refreshSparepartDatalist();
-    wrap.querySelector(".part-name-input").addEventListener("input", function () { updatePartMeta(wrap); });
+    var input = wrap.querySelector(".part-name-input");
+    input.addEventListener("input", function () { updatePartMeta(wrap); });
+    input.addEventListener("focus", function () { updatePartMeta(wrap); });
+    wrap.querySelector(".part-suggestion-list").addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-suggest-part-id], [data-part-new]");
+      if (!btn) return;
+      e.preventDefault();
+      if (btn.getAttribute("data-suggest-part-id")) {
+        var p = state.spareparts.find(function (x) { return x.id === btn.getAttribute("data-suggest-part-id"); });
+        if (p) {
+          input.value = p.name;
+          wrap.querySelector(".part-suggestion-list").innerHTML = "";
+          wrap.querySelector(".part-suggestion-list").classList.remove("active");
+          updatePartMeta(wrap);
+        }
+      } else {
+        wrap.querySelector(".part-suggestion-list").innerHTML = "";
+        wrap.querySelector(".part-suggestion-list").classList.remove("active");
+        updatePartMeta(wrap);
+      }
+    });
     wrap.querySelector(".remove-item-btn").addEventListener("click", function () { wrap.parentNode.removeChild(wrap); });
   }
 
   function updatePartMeta(row) {
-    var name = row.querySelector(".part-name-input").value.trim().toLowerCase();
-    var part = state.spareparts.find(function (p) { return p.name.toLowerCase() === name; });
+    var rawName = row.querySelector(".part-name-input").value.trim();
+    var part = findSparepartByName(rawName);
     var meta = row.querySelector(".item-meta");
     var linkInput = row.querySelector(".part-link-input");
+    renderPartSuggestions(row, suggestSpareparts(rawName), rawName);
+    if (!rawName) {
+      meta.innerHTML = 'Ketik nama sparepart, rekomendasi stok gudang akan muncul otomatis.';
+      return;
+    }
     if (!part) {
-      meta.innerHTML = '<span class="tag yellow">Sparepart baru / belum ada master</span> Admin perlu validasi master barang.';
+      meta.innerHTML = '<span class="tag yellow">Sparepart baru / belum ada master</span> Admin review, ajukan CO, lalu saat barang diterima akan otomatis dibuat di Master Data.';
       return;
     }
     var stockTag = Number(part.stock) > 0 ? '<span class="tag green">Stok: ' + esc(part.stock) + '</span>' : '<span class="tag red">Stok kosong</span>';
@@ -1394,7 +1692,7 @@
       var row = rows[i];
       var name = row.querySelector(".part-name-input").value.trim();
       var qty = Number(row.querySelector(".part-qty-input").value || 1);
-      var part = state.spareparts.find(function (p) { return p.name.toLowerCase() === name.toLowerCase(); });
+      var part = findSparepartByName(name);
       if (!name || qty <= 0) return alert("Nama sparepart dan qty wajib diisi.");
       requestItems.push({
         id: uid("item"),
@@ -1408,7 +1706,8 @@
         stock_status: part && Number(part.stock || 0) >= qty ? "stock_available" : "stock_empty",
         recommended_purchase_link: row.querySelector(".part-link-input").value.trim() || (part ? part.default_purchase_link : ""),
         estimated_price: Number(row.querySelector(".part-price-input").value || 0),
-        status: "submitted_by_mechanic"
+        status: "submitted_by_mechanic",
+        is_new_part_request: !part
       });
     }
     state.damage_reports.push(report);
@@ -1451,10 +1750,14 @@
     if ($("mechanicOngoingCount")) $("mechanicOngoingCount").textContent = ongoingRows.length + " proses";
     if ($("mechanicDoneCount")) $("mechanicDoneCount").textContent = doneRows.length + " selesai";
     if ($("mechanicHistoryCount")) $("mechanicHistoryCount").textContent = rows.length + " report";
-    if ($("mechanicOpenList")) $("mechanicOpenList").innerHTML = openRows.length ? openRows.map(function (r) { return mechanicCardWithActions(r, "open"); }).join("") : '<div class="muted">Belum ada request aktif.</div>';
-    if ($("mechanicOngoingList")) $("mechanicOngoingList").innerHTML = ongoingRows.length ? ongoingRows.map(function (r) { return mechanicCardWithActions(r, "ongoing"); }).join("") : '<div class="muted">Belum ada motor yang sedang dikerjakan.</div>';
-    if ($("mechanicCompletedList")) $("mechanicCompletedList").innerHTML = doneRows.length ? doneRows.map(function (r) { return requestCardHtml(r, true, true); }).join("") : '<div class="muted">Belum ada maintenance selesai.</div>';
-    if ($("mechanicHistoryList")) $("mechanicHistoryList").innerHTML = rows.length ? rows.map(function (r) { return requestCardHtml(r, true, true); }).join("") : '<div class="muted">Belum ada history service.</div>';
+    var pOpen = paginateRows('mechanicOpen', openRows, PAGE_SIZE);
+    var pOngoing = paginateRows('mechanicOngoing', ongoingRows, PAGE_SIZE);
+    var pDone = paginateRows('mechanicDone', doneRows, PAGE_SIZE);
+    var pHist = paginateRows('mechanicHistory', rows, PAGE_SIZE);
+    if ($("mechanicOpenList")) $("mechanicOpenList").innerHTML = openRows.length ? pOpen.rows.map(function (r) { return mechanicCardWithActions(r, "open"); }).join("") + paginationHtml('mechanicOpen', pOpen) : '<div class="muted">Belum ada request aktif.</div>';
+    if ($("mechanicOngoingList")) $("mechanicOngoingList").innerHTML = ongoingRows.length ? pOngoing.rows.map(function (r) { return mechanicCardWithActions(r, "ongoing"); }).join("") + paginationHtml('mechanicOngoing', pOngoing) : '<div class="muted">Belum ada motor yang sedang dikerjakan.</div>';
+    if ($("mechanicCompletedList")) $("mechanicCompletedList").innerHTML = doneRows.length ? pDone.rows.map(function (r) { return requestCardHtml(r, true, true); }).join("") + paginationHtml('mechanicDone', pDone) : '<div class="muted">Belum ada maintenance selesai.</div>';
+    if ($("mechanicHistoryList")) $("mechanicHistoryList").innerHTML = rows.length ? pHist.rows.map(function (r) { return requestCardHtml(r, true, true); }).join("") + paginationHtml('mechanicHistory', pHist) : '<div class="muted">Belum ada history service.</div>';
   }
 
   function handleMechanicAction(action, id) {
@@ -1533,7 +1836,8 @@
       $("adminRequestList").innerHTML = '<div class="muted">Tidak ada request untuk filter ini.</div>';
       return;
     }
-    $("adminRequestList").innerHTML = rows.map(function (r) {
+    var pager = paginateRows('admin', rows, PAGE_SIZE);
+    $("adminRequestList").innerHTML = pager.rows.map(function (r) {
       var base = requestCardHtml(r, true, false, true);
       var needOwner = needOwnerApproval(r.id);
       var actions = '<div class="card-actions">';
@@ -1588,7 +1892,7 @@
       }
       actions += '</div>';
       return base.replace(/<\/div>$/, actions + '</div>');
-    }).join("");
+    }).join("") + paginationHtml('admin', pager);
   }
 
   function editPurchaseLinks(r) {
@@ -2519,7 +2823,8 @@
   function receiveWarehouse(r) {
     r.status = "received_by_warehouse";
     getItemsForRequest(r.id).forEach(function (item) {
-      var p = state.spareparts.find(function (part) { return part.id === item.sparepart_id; });
+      var p = state.spareparts.find(function (part) { return part.id === item.sparepart_id; }) || findSparepartByName(item.sparepart_name);
+      if (!p) p = ensureSparepartFromReceivedItem(item);
       var current = p ? Number(p.stock || 0) : 0;
       var needQty = Math.max(0, Number(item.qty_requested || 0) - current);
       if (p && needQty > 0) {
@@ -2535,16 +2840,20 @@
           motor_id: r.motor_id,
           request_id: r.id,
           status: "verified",
-          notes: "Stock masuk dari pembelian owner approved untuk " + r.request_code,
+          notes: (item.is_new_part_request ? "Auto tambah master baru + " : "") + "Stock masuk dari pembelian owner approved untuk " + r.request_code,
           created_at: todayIso()
         });
       }
       if (p) {
+        item.sparepart_id = p.id;
+        item.sparepart_code = p.sparepart_code;
+        item.sparepart_name = p.name;
         item.stock_status = Number(p.stock || 0) >= Number(item.qty_requested || 0) ? "stock_available" : "stock_empty";
         item.current_stock = Number(p.stock || 0);
         item.status = "received_by_warehouse";
       }
     });
+    refreshSparepartDatalist();
   }
 
   function generateStockOutFromRequest(r) {
@@ -2615,7 +2924,8 @@
       $("ownerApprovalList").innerHTML = '<div class="muted">Belum ada approval owner.</div>';
       return;
     }
-    $("ownerApprovalList").innerHTML = rows.map(function (a) {
+    var pager = paginateRows('owner', rows, PAGE_SIZE);
+    $("ownerApprovalList").innerHTML = pager.rows.map(function (a) {
       var r = state.part_requests.find(function (x) { return x.id === a.request_id; }) || {};
       var motor = state.motors.find(function (m) { return m.id === r.motor_id; }) || {};
       var report = state.damage_reports.find(function (d) { return d.id === r.report_id; }) || {};
@@ -2642,7 +2952,7 @@
         '<div class="card-sub">Total before checkout: <b>' + formatRupiah(a.total_estimated_amount || 0) + '</b></div>' +
         collapsibleDetailHtml('Detail request, bukti checkout, dan penerimaan', ownerDetailHtml, 'klik untuk buka', false) +
         actions + '</div>';
-    }).join("");
+    }).join("") + paginationHtml('owner', pager);
   }
 
   function handleOwnerAction(action, approvalId) {
@@ -2695,8 +3005,9 @@
     var rows = state.spareparts.filter(function (p) {
       return (p.name + " " + p.sparepart_code + " " + p.room + " " + p.rack).toLowerCase().indexOf(q) >= 0;
     });
+    var pager = paginateRows('spareparts', rows, PAGE_SIZE);
     var html = '<table class="master-table"><thead><tr><th>Barcode</th><th>Nama</th><th>Stok</th><th>Lokasi</th><th>Link</th><th>Aksi</th></tr></thead><tbody>';
-    rows.forEach(function (p) {
+    pager.rows.forEach(function (p) {
       var stockCls = Number(p.stock) <= 0 ? "red" : (Number(p.stock) <= Number(p.minimum_stock) ? "yellow" : "green");
       html += '<tr>' +
         '<td data-label="Barcode"><div class="barcode-box">' + code39Svg(p.sparepart_code, 190, 70) + '</div><br><small>' + esc(p.sparepart_code) + '</small></td>' +
@@ -2708,7 +3019,7 @@
         '</tr>';
     });
     html += '</tbody></table>';
-    $("sparepartList").innerHTML = rows.length ? html : '<div class="muted">Belum ada sparepart.</div>';
+    $("sparepartList").innerHTML = rows.length ? html + paginationHtml('spareparts', pager) : '<div class="muted">Belum ada sparepart.</div>';
   }
 
   function updateSparepartCodePreview() {
@@ -2782,12 +3093,13 @@
   function renderMotors() {
     var q = ($("motorSearch").value || "").toLowerCase();
     var rows = state.motors.filter(function (m) { return (m.motor_code + " " + m.plate_number + " " + m.type + " " + m.color + " " + m.outlet).toLowerCase().indexOf(q) >= 0; });
+    var pager = paginateRows('motors', rows, PAGE_SIZE);
     var html = '<table class="master-table"><thead><tr><th>No Motor</th><th>Plat</th><th>Tipe</th><th>Warna</th><th>Outlet</th><th>Status</th><th>Aksi</th></tr></thead><tbody>';
-    rows.forEach(function (m) {
+    pager.rows.forEach(function (m) {
       html += '<tr><td data-label="No Motor"><b>' + esc(m.motor_code) + '</b></td><td data-label="Plat">' + esc(m.plate_number || "-") + '</td><td data-label="Tipe">' + esc(m.type || "-") + '</td><td data-label="Warna">' + esc(m.color || "-") + '</td><td data-label="Outlet">' + esc(m.outlet || "-") + '</td><td data-label="Status"><span class="tag gray">' + esc(m.status || "-") + '</span></td><td data-label="Aksi"><button class="ghost" data-edit-motor="' + esc(m.id) + '">Edit</button></td></tr>';
     });
     html += '</tbody></table>';
-    $("motorList").innerHTML = rows.length ? html : '<div class="muted">Belum ada motor.</div>';
+    $("motorList").innerHTML = rows.length ? html + paginationHtml('motors', pager) : '<div class="muted">Belum ada motor.</div>';
   }
 
   function editMotor(id) {
@@ -2896,14 +3208,15 @@
       var motor = state.motors.find(function (x) { return x.id === m.motor_id; }) || {};
       return ((m.movement_code || "") + " " + (m.movement_type || "") + " " + (m.sparepart_name || "") + " " + (m.sparepart_code || "") + " " + (motor.motor_code || "") + " " + (m.notes || "")).toLowerCase().indexOf(q) >= 0;
     });
+    var pager = paginateRows('movements', rows, PAGE_SIZE);
     var html = '<table><thead><tr><th>Kode</th><th>Tipe</th><th>Sparepart</th><th>Qty</th><th>Motor</th><th>Status</th><th>Waktu</th></tr></thead><tbody>';
-    rows.forEach(function (m) {
+    pager.rows.forEach(function (m) {
       var motor = state.motors.find(function (x) { return x.id === m.motor_id; }) || {};
       var cls = m.movement_type === "stock_in" ? "green" : (m.status === "waiting_verification" ? "yellow" : "gray");
       html += '<tr><td><b>' + esc(m.movement_code) + '</b></td><td>' + esc(m.movement_type) + '</td><td>' + esc(m.sparepart_name) + '<br><small>' + esc(m.sparepart_code) + '</small></td><td>' + esc(m.qty) + '</td><td>' + esc(motor.motor_code || "-") + '</td><td><span class="tag ' + cls + '">' + esc(m.status) + '</span></td><td>' + esc(formatDateTime(m.created_at)) + '</td></tr>';
     });
     html += '</tbody></table>';
-    $("movementList").innerHTML = rows.length ? html : '<div class="muted">Belum ada movement.</div>';
+    $("movementList").innerHTML = rows.length ? html + paginationHtml('movements', pager) : '<div class="muted">Belum ada movement.</div>';
   }
 
 
@@ -2999,7 +3312,8 @@
       var count = state.part_requests.filter(function (r) { return sec.statuses.indexOf(r.status) >= 0; }).length;
       return '<div class="status-section"><div class="status-count">' + count + '</div><h3>' + esc(sec.title) + '</h3></div>';
     }).join('');
-    $('overviewList').innerHTML = rows.length ? rows.map(function (r) { return requestCardHtml(r, true, true); }).join('') : '<div class="muted">Belum ada data overview.</div>';
+    var pager = paginateRows('overview', rows, PAGE_SIZE);
+    $('overviewList').innerHTML = rows.length ? pager.rows.map(function (r) { return requestCardHtml(r, true, true); }).join('') + paginationHtml('overview', pager) : '<div class="muted">Belum ada data overview.</div>';
   }
 
   function renderReports() {
@@ -3069,30 +3383,60 @@
     return '<svg class="barcode-svg" width="' + realWidth + '" height="' + height + '" viewBox="0 0 ' + realWidth + ' ' + height + '" xmlns="http://www.w3.org/2000/svg">' + bars + '<text x="' + (realWidth / 2) + '" y="' + (height - 4) + '" text-anchor="middle">' + esc(text) + '</text></svg>';
   }
 
-  function startScan(inputId) {
+  async function startScan(inputId) {
     scanTargetInputId = inputId;
     var dialog = $("scanDialog");
-    dialog.showModal();
+    if (dialog && !dialog.open) dialog.showModal();
     if (!window.Html5Qrcode) {
-      $("reader").innerHTML = '<div class="notice">Scanner kamera tidak tersedia. Ketik manual kode di field.</div>';
+      $("reader").innerHTML = '<div class="notice">Scanner kamera belum termuat. Refresh halaman atau ketik manual kode di field.</div>';
       return;
     }
+    try { await stopScannerOnly(); } catch (e) {}
     $("reader").innerHTML = "";
-    scanner = new Html5Qrcode("reader");
-    scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, function (decodedText) {
+    scanner = new Html5Qrcode("reader", { verbose: false });
+    var config = { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 };
+    var onSuccess = function (decodedText) {
       if (scanTargetInputId && $(scanTargetInputId)) {
         $(scanTargetInputId).value = decodedText;
-        $(scanTargetInputId).dispatchEvent(new Event("input"));
+        $(scanTargetInputId).dispatchEvent(new Event("input", { bubbles: true }));
+        $(scanTargetInputId).dispatchEvent(new Event("change", { bubbles: true }));
       }
       stopScan();
-    }).catch(function () {
-      $("reader").innerHTML = '<div class="notice">Kamera tidak bisa dibuka. Pastikan halaman menggunakan HTTPS dan izin kamera aktif. Bisa ketik manual.</div>';
-    });
+    };
+    var onFail = function () {};
+    try {
+      await scanner.start({ facingMode: { exact: "environment" } }, config, onSuccess, onFail);
+    } catch (err1) {
+      try {
+        await scanner.start({ facingMode: "environment" }, config, onSuccess, onFail);
+      } catch (err2) {
+        try {
+          var cameras = await Html5Qrcode.getCameras();
+          if (!cameras || !cameras.length) throw err2;
+          var back = cameras.find(function (c) { return /back|rear|environment|belakang/i.test(c.label || ''); }) || cameras[cameras.length - 1] || cameras[0];
+          await scanner.start(back.id, config, onSuccess, onFail);
+        } catch (err3) {
+          console.warn('Scanner error', err1, err2, err3);
+          $("reader").innerHTML = '<div class="notice">Kamera tidak bisa dibuka. Pastikan pakai HTTPS, izin kamera aktif, Chrome Android terbaru, lalu coba lagi. Bisa ketik kode manual.</div>';
+        }
+      }
+    }
   }
-  function stopScan() {
+
+  async function stopScannerOnly() {
+    if (!scanner) return;
+    var ref = scanner;
+    scanner = null;
+    try { await ref.stop(); } catch (e) {}
+    try { await ref.clear(); } catch (e) {}
+  }
+
+  function stopScan(e) {
+    if (e && e.preventDefault) e.preventDefault();
     var dialog = $("scanDialog");
-    if (scanner) scanner.stop().catch(function () {}).finally(function () { scanner = null; });
-    if (dialog.open) dialog.close();
+    if (dialog && dialog.open) dialog.close();
+    if ($("reader")) $("reader").innerHTML = "";
+    stopScannerOnly();
   }
 
   function exportJson() {
@@ -3175,12 +3519,24 @@
   function importMasterRows(rows, type) {
     var objs = rowsToObjects(rows);
     var added = 0;
-    var updated = 0;
+    var skipped = 0;
+    var skippedRows = [];
+    var seen = {};
     if (type === "sparepart") {
-      objs.forEach(function (o) {
-        var name = o.nama_sparepart || o.name || o.sparepart || o.nama || "";
+      objs.forEach(function (o, idx) {
+        var name = (o.nama_sparepart || o.name || o.sparepart || o.nama || "").trim();
         if (!name) return;
-        var existing = state.spareparts.find(function (p) { return p.name.toLowerCase() === name.toLowerCase(); });
+        var key = normalizeKey(name);
+        var codeKey = normalizeKey(o.sparepart_code || o.kode_barang || o.barcode_value || '');
+        var existing = state.spareparts.find(function (p) {
+          return normalizeKey(p.name) === key || (codeKey && normalizeKey(p.sparepart_code) === codeKey) || (codeKey && normalizeKey(p.barcode_value) === codeKey);
+        });
+        if (seen[key] || existing) {
+          skipped++;
+          skippedRows.push((idx + 2) + '. ' + name + (existing ? ' sudah ada di master' : ' duplikat dalam file'));
+          return;
+        }
+        seen[key] = true;
         var data = {
           name: name,
           unit: o.satuan || o.unit || "pcs",
@@ -3190,25 +3546,36 @@
           rack: o.rak_box_posisi || o.rak || o.rack || o.posisi || "",
           default_purchase_link: o.link_shopee_default || o.link || o.link_shopee || ""
         };
-        if (existing) { Object.assign(existing, data); updated++; }
-        else { var code = nextSparepartCode(); state.spareparts.push(Object.assign({ id: uid("sp"), sparepart_code: code, barcode_value: code }, data)); added++; }
+        var code = nextSparepartCode();
+        state.spareparts.push(Object.assign({ id: uid("sp"), sparepart_code: code, barcode_value: code, created_at: todayIso() }, data));
+        added++;
       });
       refreshSparepartDatalist();
       setMasterTab("sparepart");
     } else {
-      objs.forEach(function (o) {
-        var code = o.no_motor || o.motor_code || o.kode_motor || o.barcode_motor || "";
+      objs.forEach(function (o, idx) {
+        var code = (o.no_motor || o.motor_code || o.kode_motor || o.barcode_motor || "").trim();
         if (!code) return;
-        var existing = findMotorByCode(code);
-        var data = { motor_code: code, barcode_value: code, plate_number: o.plat_nomor || o.plate_number || "", type: o.tipe_motor || o.type || "", color: o.warna || o.color || "", outlet: o.outlet || "", status: o.status || "active" };
-        if (existing) { Object.assign(existing, data); updated++; }
-        else { state.motors.push(Object.assign({ id: uid("motor") }, data)); added++; }
+        var key = normalizeKey(code);
+        var plateKey = normalizeKey(o.plat_nomor || o.plate_number || '');
+        var existing = state.motors.find(function (m) { return normalizeKey(m.motor_code) === key || normalizeKey(m.barcode_value) === key || (plateKey && normalizeKey(m.plate_number) === plateKey); });
+        if (seen[key] || existing) {
+          skipped++;
+          skippedRows.push((idx + 2) + '. Motor ' + code + (existing ? ' sudah ada di master' : ' duplikat dalam file'));
+          return;
+        }
+        seen[key] = true;
+        var data = { motor_code: code, barcode_value: code, plate_number: o.plat_nomor || o.plate_number || "", type: o.tipe_motor || o.type || "", color: o.warna || o.color || "", outlet: o.outlet || "", current_location: o.outlet || "", status: o.status || "ready" };
+        state.motors.push(Object.assign({ id: uid("motor"), created_at: todayIso() }, data));
+        added++;
       });
       setMasterTab("motor");
     }
     save();
     renderAll();
-    alert("Import selesai. Tambah: " + added + " | Update: " + updated);
+    var msg = "Import selesai. Tambah baru: " + added + " | Duplikat/skip: " + skipped;
+    if (skippedRows.length) msg += "\n\nItem diskip:\n- " + skippedRows.slice(0, 20).join("\n- ") + (skippedRows.length > 20 ? "\n- ...dan " + (skippedRows.length - 20) + " item lain" : "");
+    alert(msg);
   }
 
   function importMasterFile(e, type) {
@@ -3300,14 +3667,15 @@
       return !q || hay.indexOf(q) >= 0;
     });
     if (!rows.length) { wrap.innerHTML = '<div class="empty">Belum ada user terdaftar. Tambahkan Gmail/email user di form kiri.</div>'; return; }
-    wrap.innerHTML = rows.map(function (u) {
+    var pager = paginateRows('users', rows, PAGE_SIZE);
+    wrap.innerHTML = pager.rows.map(function (u) {
       var active = u.active !== false;
       return '<div class="user-access-card">' +
         '<div><strong>' + esc(u.full_name || "-") + '</strong><div class="card-sub">' + esc(u.email || "-") + '</div></div>' +
         '<div class="user-role-stack"><span class="tag ' + (active ? 'green' : 'red') + '">' + (active ? 'Aktif' : 'Nonaktif') + '</span><span class="tag gray">' + esc(String(u.role || "-").toUpperCase()) + '</span></div>' +
         '<div class="row-actions"><button type="button" class="ghost" data-edit-user="' + esc(u.email) + '">Edit</button><button type="button" class="secondary" data-toggle-user="' + esc(u.email) + '">' + (active ? 'Nonaktifkan' : 'Aktifkan') + '</button><button type="button" class="danger" data-delete-user="' + esc(u.email) + '">Hapus</button></div>' +
       '</div>';
-    }).join("");
+    }).join("") + paginationHtml('users', pager);
   }
 
   function editUserAccess(email) {
@@ -3485,6 +3853,9 @@
     if ($("overviewSearch")) $("overviewSearch").addEventListener("input", renderOwnerOverview);
     if ($("monitorSearch")) $("monitorSearch").addEventListener("input", renderMotorMonitor);
     if ($("motorTransferForm")) $("motorTransferForm").addEventListener("submit", createMotorTransfer);
+    ["transferSendFrom", "transferSendTo", "transferReturnFrom", "transferReturnTo", "transferSendMotors", "transferReturnMotors"].forEach(function (id) {
+      if ($(id)) $(id).addEventListener("change", refreshTransferFormOptions);
+    });
     if ($("transferSearch")) $("transferSearch").addEventListener("input", renderMotorTransfers);
     $("sparepartSearch").addEventListener("input", renderSpareparts);
     $("motorSearch").addEventListener("input", renderMotors);
@@ -3535,8 +3906,11 @@
         openMediaPreviewFromElement(e.target.closest(".media-open"));
         return;
       }
-      var scanTarget = e.target.getAttribute("data-scan-target");
-      if (scanTarget) startScan(scanTarget);
+      var pagerBtn = e.target.closest && e.target.closest("[data-page-key]");
+      if (pagerBtn) { e.preventDefault(); handlePagerClick(pagerBtn.getAttribute("data-page-key"), pagerBtn.getAttribute("data-page-to")); return; }
+      var scanBtn = e.target.closest && e.target.closest("[data-scan-target]");
+      var scanTarget = scanBtn ? scanBtn.getAttribute("data-scan-target") : "";
+      if (scanTarget) { e.preventDefault(); startScan(scanTarget); }
       var adminAction = e.target.getAttribute("data-admin-action");
       if (adminAction) handleAdminAction(adminAction, e.target.getAttribute("data-id"));
       var ownerAction = e.target.getAttribute("data-owner-action");
@@ -3545,8 +3919,9 @@
       if (mechanicAction) handleMechanicAction(mechanicAction, e.target.getAttribute("data-id"));
       var selfTakeReview = e.target.getAttribute("data-selftake-review");
       if (selfTakeReview) handleSelfTakeReviewAction(selfTakeReview, e.target.getAttribute("data-id"));
-      var motorDetailId = e.target.getAttribute("data-motor-detail");
-      if (motorDetailId) openMotorDetail(motorDetailId);
+      var motorDetailBtn = e.target.closest && e.target.closest("[data-motor-detail]");
+      var motorDetailId = motorDetailBtn ? motorDetailBtn.getAttribute("data-motor-detail") : "";
+      if (motorDetailId) openMotorDetail(motorDetailId, motorDetailBtn.getAttribute("data-motor-detail-context") || "current");
       var copyWaId = e.target.getAttribute("data-copy-wa");
       if (copyWaId) copyWhatsAppLog(copyWaId);
       var quickReturnId = e.target.getAttribute("data-quick-return-motor");
@@ -3564,7 +3939,9 @@
       var deleteUserEmail = e.target.getAttribute("data-delete-user");
       if (deleteUserEmail) deleteUserAccess(deleteUserEmail);
     });
-    $("closeScanBtn").addEventListener("click", stopScan);
+    if ($("closeScanBtn")) $("closeScanBtn").addEventListener("click", stopScan);
+    if ($("scanDialog")) $("scanDialog").addEventListener("cancel", stopScan);
+    if ($("scanDialog")) $("scanDialog").addEventListener("close", function () { stopScannerOnly(); });
   }
 
   async function init() {
