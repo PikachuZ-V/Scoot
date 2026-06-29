@@ -24,6 +24,8 @@
   var pageState = {};
   var PAGE_SIZE = 15;
   var motorDetailContext = "current";
+  var MOTOR_LOCATION_OPTIONS = ["Scoot Canggu", "TP99 (HQ)", "H-Ostel Kuta"];
+
 
   var titles = {
     dashboard: ["Dashboard", "Ringkasan request, stok, dan pekerjaan motor sesuai role user."],
@@ -255,9 +257,9 @@
   function defaultData() {
     return {
       motors: [
-        { id: "motor_079", motor_code: "079", barcode_value: "079", plate_number: "DK 0000 XX", type: "Beat", color: "Hitam", outlet: "Canggu", status: "ready" },
-        { id: "motor_109", motor_code: "109", barcode_value: "109", plate_number: "DK 0001 XX", type: "Scoopy", color: "Merah", outlet: "Canggu", status: "maintenance" },
-        { id: "motor_123", motor_code: "123", barcode_value: "123", plate_number: "DK 0002 XX", type: "Vario", color: "Biru", outlet: "Karawaci", status: "ready" }
+        { id: "motor_079", motor_code: "079", barcode_value: "079", plate_number: "DK 0000 XX", type: "Beat", color: "Hitam", outlet: "Scoot Canggu", status: "ready" },
+        { id: "motor_109", motor_code: "109", barcode_value: "109", plate_number: "DK 0001 XX", type: "Scoopy", color: "Merah", outlet: "Scoot Canggu", status: "maintenance" },
+        { id: "motor_123", motor_code: "123", barcode_value: "123", plate_number: "DK 0002 XX", type: "Vario", color: "Biru", outlet: "TP99 (HQ)", status: "ready" }
       ],
       spareparts: [
         { id: "sp_1", sparepart_code: "SP-0001", barcode_value: "SP-0001", name: "Kampas Rem Belakang", unit: "pcs", stock: 4, minimum_stock: 2, room: "Gudang Sparepart 1", rack: "Rak 1 / Box Rem", default_purchase_link: "" },
@@ -289,16 +291,19 @@
     data.whatsapp_settings = data.whatsapp_settings || { enabled: true, group_name: "Group Laporan Maintenance" };
     data.motor_transfers = data.motor_transfers || [];
     data.motors.forEach(function (m) {
-      m.current_location = m.current_location || m.outlet || 'HQ';
+      var loc = canonicalLocationValue(m.current_location || m.outlet || m.location || 'TP99 (HQ)');
+      m.outlet = loc;
+      m.current_location = loc;
+      m.location = loc;
     });
     data.motor_transfers.forEach(function (t) {
       t.items = t.items || [];
       t.created_at = t.created_at || t.transfer_date || todayIso();
       t.transfer_code = t.transfer_code || seq("TRF", data.motor_transfers, "transfer_code");
-      t.send_from_location = t.send_from_location || t.from_location || 'HQ';
-      t.send_to_location = t.send_to_location || t.to_location || 'Canggu';
-      t.return_from_location = t.return_from_location || 'Canggu';
-      t.return_to_location = t.return_to_location || 'HQ';
+      t.send_from_location = canonicalLocationValue(t.send_from_location || t.from_location || 'TP99 (HQ)');
+      t.send_to_location = canonicalLocationValue(t.send_to_location || t.to_location || 'Scoot Canggu');
+      t.return_from_location = canonicalLocationValue(t.return_from_location || 'Scoot Canggu');
+      t.return_to_location = canonicalLocationValue(t.return_to_location || 'TP99 (HQ)');
       t.location_delta_summary = t.location_delta_summary || '';
     });
     data.owner_approvals.forEach(function (a) {
@@ -927,12 +932,13 @@
   }
 
   function allMotorLocations() {
-    var map = { HQ: true, Canggu: true };
+    var map = {};
+    MOTOR_LOCATION_OPTIONS.forEach(function (loc) { map[loc] = true; });
     (state.motors || []).forEach(function (m) {
-      map[normalizeLocationName(m.outlet || m.current_location || m.location)] = true;
+      map[canonicalLocationValue(m.outlet || m.current_location || m.location)] = true;
     });
     return Object.keys(map).sort(function (a,b) {
-      var order = { HQ: 1, Canggu: 2, Lainnya: 99 };
+      var order = { 'TP99 (HQ)': 1, 'Scoot Canggu': 2, 'H-Ostel Kuta': 3, Lainnya: 99 };
       return (order[a] || 50) - (order[b] || 50) || a.localeCompare(b);
     });
   }
@@ -940,16 +946,16 @@
   function fillLocationSelect(id, preferred) {
     var el = $(id);
     if (!el) return;
-    var current = el.value || preferred || '';
+    var current = canonicalLocationValue(el.value || preferred || 'TP99 (HQ)');
     var options = allMotorLocations();
-    if (preferred && options.indexOf(preferred) < 0) options.unshift(preferred);
+    if (current && options.indexOf(current) < 0) options.unshift(current);
     el.innerHTML = options.map(function (loc) { return '<option value="' + esc(loc) + '">' + esc(loc) + '</option>'; }).join('');
-    el.value = options.indexOf(current) >= 0 ? current : (preferred || options[0] || 'HQ');
+    el.value = options.indexOf(current) >= 0 ? current : (options[0] || 'TP99 (HQ)');
   }
 
   function motorOptionLabel(motor) {
     var st = motorStatusText(computedMotorStatus(motor));
-    var loc = normalizeLocationName(motor.outlet || motor.current_location || motor.location);
+    var loc = locationDisplayName(motor.outlet || motor.current_location || motor.location);
     var svc = latestServiceDateForMotor(motor.id) || motor.last_service_date || '-';
     return 'Motor ' + (motor.motor_code || '-') + ' · ' + (motor.type || '-') + ' · ' + (motor.plate_number || '-') + ' · ' + loc + ' · ' + st + ' · service: ' + svc;
   }
@@ -1004,7 +1010,7 @@
     return ids.map(function (id) {
       var m = state.motors.find(function (x) { return x.id === id; }) || {};
       var svc = latestServiceDateForMotor(id) || m.last_service_date || '';
-      var loc = normalizeLocationName(m.outlet || m.current_location || m.location);
+      var loc = locationDisplayName(m.outlet || m.current_location || m.location);
       var dateInput = type === 'return' ? '<input type="date" class="transfer-service-date" data-service-motor-id="' + esc(id) + '" value="' + esc(svc) + '" />' : '<b>' + esc(svc || '-') + '</b>';
       return '<div class="selected-motor-row"><div><b>Motor ' + esc(m.motor_code || '-') + '</b><span>' + esc(m.type || '-') + ' · ' + esc(m.plate_number || '-') + ' · ' + esc(loc) + '</span></div><div><small>Service terakhir</small>' + dateInput + '</div></div>';
     }).join('');
@@ -1012,16 +1018,16 @@
 
   function refreshTransferFormOptions() {
     if (!$('motorTransferForm')) return;
-    fillLocationSelect('transferSendFrom', 'HQ');
-    fillLocationSelect('transferSendTo', 'Canggu');
-    fillLocationSelect('transferReturnFrom', 'Canggu');
-    fillLocationSelect('transferReturnTo', 'HQ');
+    fillLocationSelect('transferSendFrom', 'TP99 (HQ)');
+    fillLocationSelect('transferSendTo', 'Scoot Canggu');
+    fillLocationSelect('transferReturnFrom', 'Scoot Canggu');
+    fillLocationSelect('transferReturnTo', 'TP99 (HQ)');
 
     enforceMaxMotorSelection('transferSendMotors', 4);
     enforceMaxMotorSelection('transferReturnMotors', 4);
 
-    var sendFrom = $('transferSendFrom') ? $('transferSendFrom').value : 'HQ';
-    var returnFrom = $('transferReturnFrom') ? $('transferReturnFrom').value : 'Canggu';
+    var sendFrom = $('transferSendFrom') ? $('transferSendFrom').value : 'TP99 (HQ)';
+    var returnFrom = $('transferReturnFrom') ? $('transferReturnFrom').value : 'Scoot Canggu';
     var sendSearch = $('transferSendSearch') ? $('transferSendSearch').value : '';
     var returnSearch = $('transferReturnSearch') ? $('transferReturnSearch').value : '';
     var sendRows = filterMotorRowsForSearch(eligibleReadySendMotors(sendFrom), sendSearch).slice(0, 80);
@@ -1073,10 +1079,10 @@
   function createMotorTransfer(e) {
     e.preventDefault();
     var transferDate = $('transferDate').value || todayDashed();
-    var sendFrom = ($('transferSendFrom') && $('transferSendFrom').value) || 'HQ';
-    var sendTo = ($('transferSendTo') && $('transferSendTo').value) || 'Canggu';
-    var returnFrom = ($('transferReturnFrom') && $('transferReturnFrom').value) || 'Canggu';
-    var returnTo = ($('transferReturnTo') && $('transferReturnTo').value) || 'HQ';
+    var sendFrom = canonicalLocationValue(($('transferSendFrom') && $('transferSendFrom').value) || 'TP99 (HQ)');
+    var sendTo = canonicalLocationValue(($('transferSendTo') && $('transferSendTo').value) || 'Scoot Canggu');
+    var returnFrom = canonicalLocationValue(($('transferReturnFrom') && $('transferReturnFrom').value) || 'Scoot Canggu');
+    var returnTo = canonicalLocationValue(($('transferReturnTo') && $('transferReturnTo').value) || 'TP99 (HQ)');
     var adminName = $('transferAdminName').value.trim() || currentUserName();
     var note = $('transferNote').value.trim();
     var sendIds = selectedValues('transferSendMotors');
@@ -1092,14 +1098,15 @@
       if (computedMotorStatus(motor) !== 'ready') { invalid.push('Motor ' + (motor.motor_code || id) + ' bukan Ready'); return; }
       if (normalizeLocationName(motor.outlet || motor.current_location || motor.location) !== normalizeLocationName(sendFrom)) { invalid.push('Motor ' + (motor.motor_code || id) + ' tidak di ' + sendFrom); return; }
       var serviceDate = latestServiceDateForMotor(motor.id) || motor.last_service_date || '';
-      motor.outlet = normalizeLocationName(sendTo);
-      motor.current_location = normalizeLocationName(sendTo);
+      motor.outlet = canonicalLocationValue(sendTo);
+      motor.current_location = canonicalLocationValue(sendTo);
+      motor.location = canonicalLocationValue(sendTo);
       motor.status = 'ready';
       motor.last_dispatch_date = transferDate;
-      motor.last_dispatch_from = normalizeLocationName(sendFrom);
-      motor.last_dispatch_to = normalizeLocationName(sendTo);
+      motor.last_dispatch_from = canonicalLocationValue(sendFrom);
+      motor.last_dispatch_to = canonicalLocationValue(sendTo);
       if (serviceDate) motor.last_service_date = serviceDate;
-      items.push({ id: uid('trfi'), direction: 'send_ready', motor_id: motor.id, motor_code: motor.motor_code, from_location: normalizeLocationName(sendFrom), to_location: normalizeLocationName(sendTo), last_service_date: serviceDate, note: 'Motor ready dikirim dari ' + sendFrom + ' ke ' + sendTo });
+      items.push({ id: uid('trfi'), direction: 'send_ready', motor_id: motor.id, motor_code: motor.motor_code, from_location: canonicalLocationValue(sendFrom), to_location: canonicalLocationValue(sendTo), last_service_date: serviceDate, note: 'Motor ready dikirim dari ' + canonicalLocationValue(sendFrom) + ' ke ' + canonicalLocationValue(sendTo) });
     });
     returnIds.forEach(function (id) {
       var motor = state.motors.find(function (m) { return m.id === id; });
@@ -1107,18 +1114,19 @@
       if (normalizeLocationName(motor.outlet || motor.current_location || motor.location) !== normalizeLocationName(returnFrom)) { invalid.push('Motor ' + (motor.motor_code || id) + ' tidak di ' + returnFrom); return; }
       var dateEl = Array.prototype.slice.call(document.querySelectorAll('[data-service-motor-id]')).find(function (el) { return el.getAttribute('data-service-motor-id') === id; });
       var serviceDate = dateEl && dateEl.value ? dateEl.value : (latestServiceDateForMotor(motor.id) || motor.last_service_date || '');
-      motor.outlet = normalizeLocationName(returnTo);
-      motor.current_location = normalizeLocationName(returnTo);
+      motor.outlet = canonicalLocationValue(returnTo);
+      motor.current_location = canonicalLocationValue(returnTo);
+      motor.location = canonicalLocationValue(returnTo);
       motor.status = 'maintenance';
-      motor.return_from_location = normalizeLocationName(returnFrom);
-      motor.return_to_location = normalizeLocationName(returnTo);
+      motor.return_from_location = canonicalLocationValue(returnFrom);
+      motor.return_to_location = canonicalLocationValue(returnTo);
       motor.return_date = transferDate;
       motor.return_note = note || 'Retur dari outlet untuk maintenance.';
       motor.last_service_date = serviceDate || motor.last_service_date || '';
-      items.push({ id: uid('trfi'), direction: 'return_maintenance', motor_id: motor.id, motor_code: motor.motor_code, from_location: normalizeLocationName(returnFrom), to_location: normalizeLocationName(returnTo), last_service_date: motor.last_service_date || '', note: note || 'Retur dari ' + returnFrom + ' ke ' + returnTo + ' untuk maintenance.' });
+      items.push({ id: uid('trfi'), direction: 'return_maintenance', motor_id: motor.id, motor_code: motor.motor_code, from_location: canonicalLocationValue(returnFrom), to_location: canonicalLocationValue(returnTo), last_service_date: motor.last_service_date || '', note: note || 'Retur dari ' + canonicalLocationValue(returnFrom) + ' ke ' + canonicalLocationValue(returnTo) + ' untuk maintenance.' });
     });
     if (!items.length) return alert('Tidak ada motor yang valid untuk disimpan. ' + (invalid.length ? invalid.join('; ') : ''));
-    var transfer = { id: uid('trf'), transfer_code: seq('TRF', state.motor_transfers || [], 'transfer_code'), transfer_date: transferDate, from_location: normalizeLocationName(sendFrom), to_location: normalizeLocationName(sendTo), send_from_location: normalizeLocationName(sendFrom), send_to_location: normalizeLocationName(sendTo), return_from_location: normalizeLocationName(returnFrom), return_to_location: normalizeLocationName(returnTo), admin_name: adminName, note: note, items: items, location_delta_summary: transferDeltaSummary(sendIds.length, returnIds.length, sendFrom, sendTo, returnFrom, returnTo), created_at: todayIso(), created_by: currentUserName() };
+    var transfer = { id: uid('trf'), transfer_code: seq('TRF', state.motor_transfers || [], 'transfer_code'), transfer_date: transferDate, from_location: canonicalLocationValue(sendFrom), to_location: canonicalLocationValue(sendTo), send_from_location: canonicalLocationValue(sendFrom), send_to_location: canonicalLocationValue(sendTo), return_from_location: canonicalLocationValue(returnFrom), return_to_location: canonicalLocationValue(returnTo), admin_name: adminName, note: note, items: items, location_delta_summary: transferDeltaSummary(sendIds.length, returnIds.length, sendFrom, sendTo, returnFrom, returnTo), created_at: todayIso(), created_by: currentUserName() };
     state.motor_transfers.unshift(transfer);
     save();
     if ($('transferNote')) $('transferNote').value = '';
@@ -1391,9 +1399,32 @@
     var text = String(value || '').trim();
     if (!text) return 'Lainnya';
     var low = text.toLowerCase();
-    if (low.indexOf('hq') >= 0 || low.indexOf('head') >= 0 || low.indexOf('gudang') >= 0 || low.indexOf('pusat') >= 0) return 'HQ';
-    if (low.indexOf('canggu') >= 0 || low.indexOf('cgg') >= 0) return 'Canggu';
+    if (low.indexOf('tp99') >= 0 || low.indexOf('hq') >= 0 || low.indexOf('head') >= 0 || low.indexOf('gudang') >= 0 || low.indexOf('pusat') >= 0 || low === 'karawaci') return 'HQ';
+    if (low.indexOf('scoot canggu') >= 0 || low.indexOf('canggu') >= 0 || low.indexOf('cgg') >= 0) return 'Canggu';
+    if (low.indexOf('h-ostel') >= 0 || low.indexOf('hostel') >= 0 || low.indexOf('kuta') >= 0) return 'H-Ostel Kuta';
     return text;
+  }
+
+  function canonicalLocationValue(value) {
+    var norm = normalizeLocationName(value);
+    if (norm === 'Canggu') return 'Scoot Canggu';
+    if (norm === 'HQ') return 'TP99 (HQ)';
+    if (norm === 'H-Ostel Kuta') return 'H-Ostel Kuta';
+    return norm || 'TP99 (HQ)';
+  }
+
+  function locationDisplayName(value) {
+    return canonicalLocationValue(value);
+  }
+
+  function fillFixedMotorLocationSelect(id, current) {
+    var el = $(id);
+    if (!el) return;
+    var value = canonicalLocationValue(current || el.value || 'TP99 (HQ)');
+    el.innerHTML = MOTOR_LOCATION_OPTIONS.map(function (loc) {
+      return '<option value="' + esc(loc) + '">' + esc(loc) + '</option>';
+    }).join('');
+    el.value = MOTOR_LOCATION_OPTIONS.indexOf(value) >= 0 ? value : 'TP99 (HQ)';
   }
 
   function motorLocationStats() {
@@ -1430,7 +1461,7 @@
   function transferDeltaSummary(sentCount, returnedCount, sendFrom, sendTo, returnFrom, returnTo) {
     var map = {};
     function add(loc, delta) {
-      loc = normalizeLocationName(loc);
+      loc = canonicalLocationValue(loc);
       map[loc] = (map[loc] || 0) + delta;
     }
     add(sendFrom, -sentCount);
@@ -3211,12 +3242,13 @@
   }
 
   function renderMotors() {
+    fillFixedMotorLocationSelect("motorOutlet", $("motorOutlet") ? $("motorOutlet").value : "TP99 (HQ)");
     var q = ($("motorSearch").value || "").toLowerCase();
-    var rows = state.motors.filter(function (m) { return (m.motor_code + " " + m.plate_number + " " + m.type + " " + m.color + " " + m.outlet).toLowerCase().indexOf(q) >= 0; });
+    var rows = state.motors.filter(function (m) { return (m.motor_code + " " + m.plate_number + " " + m.type + " " + m.color + " " + locationDisplayName(m.outlet || m.current_location || m.location)).toLowerCase().indexOf(q) >= 0; });
     var pager = paginateRows('motors', rows, PAGE_SIZE);
-    var html = '<table class="master-table"><thead><tr><th>No Motor</th><th>Plat</th><th>Tipe</th><th>Warna</th><th>Outlet</th><th>Status</th><th>Aksi</th></tr></thead><tbody>';
+    var html = '<table class="master-table"><thead><tr><th>No Motor</th><th>Plat</th><th>Tipe</th><th>Warna</th><th>Lokasi</th><th>Status</th><th>Aksi</th></tr></thead><tbody>';
     pager.rows.forEach(function (m) {
-      html += '<tr><td data-label="No Motor"><b>' + esc(m.motor_code) + '</b></td><td data-label="Plat">' + esc(m.plate_number || "-") + '</td><td data-label="Tipe">' + esc(m.type || "-") + '</td><td data-label="Warna">' + esc(m.color || "-") + '</td><td data-label="Outlet">' + esc(m.outlet || "-") + '</td><td data-label="Status"><span class="tag gray">' + esc(m.status || "-") + '</span></td><td data-label="Aksi"><button class="ghost" data-edit-motor="' + esc(m.id) + '">Edit</button></td></tr>';
+      html += '<tr><td data-label="No Motor"><b>' + esc(m.motor_code) + '</b></td><td data-label="Plat">' + esc(m.plate_number || "-") + '</td><td data-label="Tipe">' + esc(m.type || "-") + '</td><td data-label="Warna">' + esc(m.color || "-") + '</td><td data-label="Lokasi">' + esc(locationDisplayName(m.outlet || m.current_location || m.location || "-")) + '</td><td data-label="Status"><span class="tag gray">' + esc(m.status || "-") + '</span></td><td data-label="Aksi"><button class="ghost" data-edit-motor="' + esc(m.id) + '">Edit</button></td></tr>';
     });
     html += '</tbody></table>';
     $("motorList").innerHTML = rows.length ? html + paginationHtml('motors', pager) : '<div class="muted">Belum ada motor.</div>';
@@ -3230,7 +3262,7 @@
     $("plateNumber").value = m.plate_number || "";
     $("motorType").value = m.type || "";
     $("motorColor").value = m.color || "";
-    $("motorOutlet").value = m.outlet || "";
+    fillFixedMotorLocationSelect("motorOutlet", m.outlet || m.current_location || m.location || "TP99 (HQ)");
     setPage("spareparts");
     setMasterTab("motor");
   }
@@ -3243,12 +3275,14 @@
     var existing = editId ? state.motors.find(function (x) { return x.id === editId; }) : findMotorByCode(code);
     var duplicate = state.motors.find(function (x) { return x.motor_code === code && x.id !== editId; });
     if (duplicate) return alert("No motor ini sudah ada di master: " + code);
-    var data = { motor_code: code, barcode_value: code, plate_number: $("plateNumber").value.trim(), type: $("motorType").value.trim(), color: $("motorColor").value.trim(), outlet: $("motorOutlet").value.trim(), status: "active" };
+    var loc = canonicalLocationValue($("motorOutlet").value);
+    var data = { motor_code: code, barcode_value: code, plate_number: $("plateNumber").value.trim(), type: $("motorType").value.trim(), color: $("motorColor").value.trim(), outlet: loc, current_location: loc, location: loc, status: existing ? (existing.status || "ready") : "ready" };
     if (existing) Object.assign(existing, data);
     else state.motors.push(Object.assign({ id: uid("motor") }, data));
     save();
     e.target.reset();
     if ($("motorEditId")) $("motorEditId").value = "";
+    fillFixedMotorLocationSelect("motorOutlet", "TP99 (HQ)");
     renderAll();
     setMasterTab("motor");
   }
@@ -3703,7 +3737,8 @@
           return;
         }
         seen[key] = true;
-        var data = { motor_code: code, barcode_value: code, plate_number: o.plat_nomor || o.plate_number || "", type: o.tipe_motor || o.type || "", color: o.warna || o.color || "", outlet: o.outlet || "", current_location: o.outlet || "", status: o.status || "ready" };
+        var loc = canonicalLocationValue(o.lokasi || o.outlet || o.location || o.current_location || "TP99 (HQ)");
+        var data = { motor_code: code, barcode_value: code, plate_number: o.plat_nomor || o.plate_number || "", type: o.tipe_motor || o.type || "", color: o.warna || o.color || "", outlet: loc, current_location: loc, location: loc, status: o.status || "ready" };
         state.motors.push(Object.assign({ id: uid("motor"), created_at: todayIso() }, data));
         added++;
       });
