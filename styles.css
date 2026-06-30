@@ -2058,3 +2058,502 @@ dialog::backdrop { background: rgba(15, 23, 42, .55); backdrop-filter: blur(3px)
   .top-actions { grid-template-columns: 1fr; }
   .hamburger { width: 42px; height: 42px; }
 }
+
+/* =========================================================
+   V27 - User Friendly UI + Sticky Hamburger/Menu Fix
+   Fokus: tidak terlalu rame, detail tidak menumpuk, dan menu mobile bisa diklik.
+   ========================================================= */
+:root {
+  --v27-bg: #f7f9fc;
+  --v27-surface: #ffffff;
+  --v27-line: #e2e8f0;
+  --v27-text: #111827;
+  --v27-muted: #667085;
+  --v27-soft: #f8fafc;
+  --v27-shadow: 0 10px 24px rgba(15, 23, 42, .055);
+  --v27-shadow-card: 0 4px 14px rgba(15, 23, 42, .045);
+}
+
+body {
+  background: var(--v27-bg);
+}
+
+/* Sticky topbar + hamburger always above content */
+.topbar {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 1000 !important;
+  background: rgba(247, 249, 252, .96) !important;
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(226, 232, 240, .9) !important;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, .04) !important;
+}
+
+.hamburger {
+  position: relative !important;
+  z-index: 1301 !important;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  touch-action: manipulation;
+}
+
+/* Mobile menu click fix: sidebar must be above backdrop */
+.mobile-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200 !important;
+  background: rgba(15, 23, 42, .45);
+  opacity: 0;
+  display: none;
+  transition: opacity .18s ease;
+}
+
+body.sidebar-open,
+body.menu-open {
+  overflow: hidden;
+}
+
+body.sidebar-open .mobile-backdrop,
+body.menu-open .mobile-backdrop,
+.mobile-backdrop.show {
+  display: block !important;
+  opacity: 1 !important;
+}
+
+.sidebar {
+  z-index: 1300 !important;
+}
+
+.nav button {
+  position: relative;
+  z-index: 1302;
+  pointer-events: auto !important;
+}
+
+/* More calm, less busy surface system */
+.panel,
+.metric,
+.card,
+.status-section,
+.report-card,
+.motor-status-card,
+.user-access-card,
+.overview-kpi-panel,
+.location-section,
+.compact-card,
+.transfer-card,
+.mini-transfer-card {
+  background: var(--v27-surface) !important;
+  border: 1px solid var(--v27-line) !important;
+  box-shadow: var(--v27-shadow-card) !important;
+}
+
+.panel {
+  border-radius: 22px !important;
+  padding: 18px !important;
+  margin-bottom: 16px !important;
+}
+
+.panel-head {
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px !important;
+}
+
+.panel-head h2,
+.panel h2,
+.form-panel h2 {
+  font-size: 20px !important;
+  letter-spacing: -.025em;
+}
+
+.mini-desc,
+.hint,
+.muted {
+  color: var(--v27-muted) !important;
+}
+
+.notice.compact {
+  padding: 10px 12px !important;
+  border-radius: 14px !important;
+  background: #eff6ff !important;
+  border: 1px solid #dbeafe !important;
+  box-shadow: none !important;
+  font-size: 13px;
+}
+
+/* Summary metrics: simpler, no decorative bubbles */
+.metric-grid {
+  gap: 12px !important;
+  margin-bottom: 14px !important;
+}
+
+.metric {
+  border-radius: 18px !important;
+  padding: 15px 16px !important;
+  min-height: 104px;
+  overflow: hidden;
+}
+
+.metric::after {
+  display: none !important;
+}
+
+.metric span {
+  margin-bottom: 7px !important;
+  font-size: 12px !important;
+  font-weight: 800 !important;
+  color: var(--v27-muted) !important;
+}
+
+.metric strong {
+  font-size: clamp(24px, 2.4vw, 32px) !important;
+  line-height: 1.05;
+}
+
+/* Dashboard status and location cards: compact and readable */
+.status-section-grid,
+.location-summary-grid {
+  gap: 12px !important;
+  margin-bottom: 14px !important;
+}
+
+.location-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
+}
+
+.location-section {
+  position: relative;
+  border-radius: 20px !important;
+  padding: 16px 18px !important;
+  min-height: 128px;
+}
+
+.location-section h3 {
+  margin: 0 76px 12px 0 !important;
+  font-size: 16px !important;
+  letter-spacing: -.01em;
+}
+
+.location-section .status-count {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  min-width: 48px;
+  height: 40px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 24px !important;
+  font-weight: 900;
+}
+
+.location-section .mini-row {
+  margin: 4px 0 0 !important;
+  padding: 6px 0 !important;
+  border: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 10px !important;
+  background: transparent !important;
+}
+
+.location-section .mini-row b {
+  font-size: 12px;
+  color: var(--v27-text);
+}
+
+.location-section .mini-row span {
+  min-width: 28px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #f1f5f9;
+  color: #475569 !important;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+/* Details default: looks like dropdown, not a large panel */
+details.dashboard-status-dropdown,
+details.compact-details,
+details.detail-dropdown,
+details.report-detail,
+.monitor-location-block.compact-details {
+  border-radius: 18px !important;
+  box-shadow: var(--v27-shadow-card) !important;
+}
+
+details.dashboard-status-dropdown summary,
+details.compact-details summary,
+details.detail-dropdown summary,
+details.report-detail summary,
+.monitor-location-block.compact-details summary {
+  min-height: 50px !important;
+  padding: 12px 14px !important;
+  background: #f8fafc !important;
+}
+
+details.dashboard-status-dropdown .status-count {
+  font-size: 22px !important;
+  min-width: 40px;
+  height: 34px;
+  border-radius: 12px;
+  display: inline-grid;
+  place-items: center;
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+.dashboard-status-body,
+.detail-dropdown-body,
+.report-scroll-list {
+  padding: 12px !important;
+}
+
+/* Warehouse / Stock: remove loud hero banner, make it clean */
+.warehouse-hero.panel {
+  background: #ffffff !important;
+  color: var(--v27-text) !important;
+  border: 1px solid var(--v27-line) !important;
+  box-shadow: var(--v27-shadow-card) !important;
+  border-radius: 22px !important;
+  padding: 18px !important;
+  display: grid !important;
+  grid-template-columns: minmax(230px, 1fr) minmax(360px, 1.25fr);
+  align-items: center;
+  gap: 16px;
+}
+
+.warehouse-hero h2 {
+  color: var(--v27-text) !important;
+  margin: 0 0 5px !important;
+}
+
+.warehouse-mini-metrics {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(110px, 1fr)) !important;
+  gap: 10px !important;
+}
+
+.warehouse-mini-metrics span,
+.warehouse-mini-metrics > * {
+  min-height: 84px !important;
+  padding: 13px 14px !important;
+  border-radius: 16px !important;
+  background: #f8fafc !important;
+  border: 1px solid var(--v27-line) !important;
+  box-shadow: none !important;
+  color: var(--v27-text) !important;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.warehouse-mini-metrics b {
+  font-size: 25px !important;
+  color: var(--v27-text) !important;
+}
+
+.warehouse-mini-metrics small {
+  color: var(--v27-muted) !important;
+  font-size: 12px !important;
+  line-height: 1.35;
+}
+
+.warehouse-grid {
+  gap: 14px !important;
+}
+
+/* Reduce visual noise in list cards */
+.card,
+.compact-card,
+.motor-status-card,
+.transfer-card,
+.mini-transfer-card {
+  border-radius: 18px !important;
+  padding: 14px !important;
+}
+
+.card-list,
+.monitor-grid,
+.inner-grid,
+.wa-log-list {
+  gap: 10px !important;
+}
+
+.card-actions button,
+.primary,
+.secondary,
+.ghost,
+button {
+  touch-action: manipulation;
+}
+
+/* WhatsApp log: keep compact */
+.whatsapp-panel .wa-log-list {
+  max-height: 330px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.wa-log-card pre {
+  max-height: 120px !important;
+  font-size: 12px !important;
+}
+
+/* Tables and forms: cleaner mobile-friendly spacing */
+.form-panel label,
+.panel label,
+label {
+  font-size: 13px;
+}
+
+input,
+select,
+textarea {
+  border-radius: 12px !important;
+}
+
+.section-tabs {
+  background: #eef2f7 !important;
+  border: 1px solid var(--v27-line);
+}
+
+/* Mobile/tablet */
+@media (max-width: 1180px) {
+  .app-shell {
+    display: block !important;
+  }
+  .sidebar {
+    position: fixed !important;
+    inset: 0 auto 0 0 !important;
+    height: 100dvh !important;
+    width: min(86vw, 320px) !important;
+    transform: translateX(-105%) !important;
+    transition: transform .22s ease !important;
+    overflow-y: auto !important;
+    z-index: 1300 !important;
+  }
+  body.sidebar-open .sidebar,
+  body.menu-open .sidebar,
+  .sidebar.open,
+  .app-shell.menu-open .sidebar {
+    transform: translateX(0) !important;
+  }
+  .main {
+    padding: 16px 14px 32px !important;
+    width: 100% !important;
+  }
+  .topbar {
+    margin: -16px -14px 16px !important;
+    padding: 12px 14px !important;
+  }
+  .warehouse-hero.panel {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    position: sticky !important;
+    top: 0 !important;
+    align-items: stretch !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+  }
+  .title-row {
+    display: grid !important;
+    grid-template-columns: 46px 1fr !important;
+    align-items: center !important;
+    gap: 10px !important;
+    width: 100% !important;
+  }
+  .hamburger {
+    width: 44px !important;
+    height: 44px !important;
+    border-radius: 14px !important;
+    position: relative !important;
+  }
+  .title-row h1,
+  .topbar h1 {
+    font-size: 22px !important;
+    line-height: 1.1;
+  }
+  .topbar p {
+    font-size: 12px !important;
+    line-height: 1.35;
+  }
+  .top-actions {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    width: 100% !important;
+    gap: 8px !important;
+  }
+  .top-actions .sync-pill {
+    grid-column: 1 / -1 !important;
+    justify-content: center !important;
+  }
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+  .metric {
+    min-height: 94px !important;
+    padding: 13px !important;
+  }
+  .metric strong {
+    font-size: 25px !important;
+  }
+  .panel {
+    padding: 14px !important;
+    border-radius: 20px !important;
+  }
+  .warehouse-mini-metrics {
+    grid-template-columns: 1fr !important;
+  }
+  .location-section {
+    min-height: 118px;
+  }
+  .split-grid,
+  .transfer-layout,
+  .warehouse-grid,
+  .checkout-layout,
+  .user-management-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .card-actions {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    width: 100% !important;
+  }
+  .card-actions button,
+  .panel-head input,
+  .panel-head select,
+  .top-actions button {
+    width: 100% !important;
+  }
+  .section-tabs {
+    overflow-x: auto !important;
+    display: flex !important;
+    gap: 4px;
+  }
+  .tab-btn {
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+}
+
+@media (max-width: 420px) {
+  .metric-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .top-actions {
+    grid-template-columns: 1fr !important;
+  }
+}

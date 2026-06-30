@@ -3997,16 +3997,48 @@
     location.reload();
   }
 
-  function openMobileMenu() { document.body.classList.add("sidebar-open"); }
-  function closeMobileMenu() { document.body.classList.remove("sidebar-open"); }
+  function openMobileMenu() {
+    document.body.classList.add("sidebar-open", "menu-open");
+    var shell = $("appShell");
+    var sidebar = $("sidebar");
+    var backdrop = $("mobileBackdrop");
+    var toggle = $("menuToggle");
+    if (shell) shell.classList.add("menu-open");
+    if (sidebar) sidebar.classList.add("open");
+    if (backdrop) backdrop.classList.add("show");
+    if (toggle) toggle.setAttribute("aria-expanded", "true");
+  }
+  function closeMobileMenu() {
+    document.body.classList.remove("sidebar-open", "menu-open");
+    var shell = $("appShell");
+    var sidebar = $("sidebar");
+    var backdrop = $("mobileBackdrop");
+    var toggle = $("menuToggle");
+    if (shell) shell.classList.remove("menu-open");
+    if (sidebar) sidebar.classList.remove("open");
+    if (backdrop) backdrop.classList.remove("show");
+    if (toggle) toggle.setAttribute("aria-expanded", "false");
+  }
+  function toggleMobileMenu() {
+    if (document.body.classList.contains("sidebar-open") || document.body.classList.contains("menu-open")) closeMobileMenu();
+    else openMobileMenu();
+  }
 
   function bindEvents() {
-    document.querySelectorAll(".nav button").forEach(function (btn) {
-      btn.addEventListener("click", function () { setPage(btn.getAttribute("data-page")); });
-    });
+    var nav = $("nav");
+    if (nav) {
+      nav.addEventListener("click", function (e) {
+        var btn = e.target.closest && e.target.closest("button[data-page]");
+        if (!btn || btn.disabled || btn.style.display === "none") return;
+        e.preventDefault();
+        e.stopPropagation();
+        setPage(btn.getAttribute("data-page"));
+      });
+    }
     if ($("roleSelect")) $("roleSelect").addEventListener("change", applyRoleView);
-    $("menuToggle").addEventListener("click", openMobileMenu);
-    $("mobileBackdrop").addEventListener("click", closeMobileMenu);
+    if ($("menuToggle")) $("menuToggle").addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); toggleMobileMenu(); });
+    if ($("mobileBackdrop")) $("mobileBackdrop").addEventListener("click", closeMobileMenu);
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeMobileMenu(); });
     $("addRequestItemBtn").addEventListener("click", addRequestItemRow);
     $("mechanicForm").addEventListener("submit", createMechanicRequest);
     if ($("stockOutForm")) $("stockOutForm").addEventListener("submit", createStockOut);
